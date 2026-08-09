@@ -1,0 +1,113 @@
+### ---------------------------------------------------------------------------------------------
+### Secrets — keep this block first; it is the only part of this file that is security-relevant.
+### ---------------------------------------------------------------------------------------------
+
+# local.properties holds sdk.dir AND the two real API keys (MAPS_API_KEY, PLANTNET_API_KEY).
+# It must never be committed. Both a rooted and an unrooted pattern, so a copy in a subdirectory
+# is caught too.
+/local.properties
+local.properties
+
+# NOTE: local.defaults.properties is deliberately NOT ignored. It is the committed placeholder file
+# the Secrets Gradle Plugin falls back to, and it contains only YOUR_KEY_HERE-style values. The
+# patterns above match the literal name "local.properties" only, so they cannot catch it.
+
+# Signing material. None exists in this project today (debug builds use the auto-generated debug
+# keystore in ~/.android), but a release key must never land here.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pepk
+keystore.properties
+signing.properties
+
+# Service-account / OAuth blobs that Android tooling likes to drop into the project root.
+google-services.json
+.env
+.env.*
+
+### ---------------------------------------------------------------------------------------------
+### Gradle
+### ---------------------------------------------------------------------------------------------
+.gradle/
+build/
+/build
+app/build/
+gradle-app.setting
+.gradletasknamecache
+
+### ---------------------------------------------------------------------------------------------
+### Android build outputs
+### ---------------------------------------------------------------------------------------------
+*.apk
+*.aab
+*.ap_
+*.aar
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+/captures
+captures/
+
+# Native build artifacts (this project has no NDK sources, but AGP still creates these dirs when a
+# dependency ships prefabs).
+.externalNativeBuild/
+.cxx/
+
+# Lint / test reports are regenerated on every run.
+lint-results*.html
+lint-results*.xml
+
+### ---------------------------------------------------------------------------------------------
+### IntelliJ / Android Studio
+### ---------------------------------------------------------------------------------------------
+*.iml
+.kotlin/
+
+# Ignore the machine-specific parts of .idea and keep the sensible shared subset
+# (codeStyles/, inspectionProfiles/, and the portable $PROJECT_DIR$-relative project files).
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/dictionaries/
+.idea/shelf/
+.idea/caches/
+.idea/libraries/
+.idea/modules/
+.idea/modules.xml
+.idea/*.iml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/jarRepositories.xml
+.idea/deploymentTargetSelector.xml
+.idea/deploymentTargetDropDown.xml
+.idea/androidTestResultsUserPreferences.xml
+.idea/sonarlint/
+.idea/httpRequests/
+
+# Per-developer Claude Code tool permissions. Harmless, but personal to one machine — the shared
+# .claude/settings.json (if one is ever added) is the file meant to be committed.
+.claude/settings.local.json
+
+### ---------------------------------------------------------------------------------------------
+### Field data
+### ---------------------------------------------------------------------------------------------
+
+# Capture photos written by the app carry GPS EXIF from wherever they were shot. One has been left
+# in the project root during development; ignoring the pattern keeps survey photos out of a public
+# repo by default.
+/SpatialMapper_*.jpg
+*.hprof
+
+### ---------------------------------------------------------------------------------------------
+### OS / editor cruft
+### ---------------------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
