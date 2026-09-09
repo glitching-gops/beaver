@@ -17,6 +17,13 @@ mapsUtils = "4.0.0"
 # matching this project. Bump to 8.3.x only after moving compileSdk to 37.
 mapsCompose = "8.2.0"
 secretsPlugin = "2.0.1"
+# STAGE A PROOF OF CONCEPT ONLY — debugImplementation, see app/build.gradle.kts.
+# 13.6.1 is the newest STABLE release. Maven's <release> tag currently points at 13.6.1-pre0, which is
+# a pre-release: MapLibre publishes -pre builds to the same coordinate, so that tag is "last
+# published", not "last stable". Do not let a tooling suggestion bump this to a -pre version.
+# Built against kotlin-stdlib 2.2.10 — exactly this project's Kotlin — so it cannot hit the class
+# metadata ceiling that ruled out Coil 3.5.x.
+maplibre = "13.6.1"
 # Room 2.8.4 is the current stable 2.x (maintenance) line and still ships room-ktx. Room 3.0.x is
 # alpha, coordinates androidx.room3, and drops room-ktx (coroutines-first) — not "current stable".
 room = "2.8.4"
@@ -59,9 +66,15 @@ arsceneview = { group = "io.github.sceneview", name = "arsceneview", version.ref
 ar-core = { group = "com.google.ar", name = "core", version.ref = "arcore" }
 maps-utils = { group = "com.google.maps.android", name = "android-maps-utils", version.ref = "mapsUtils" }
 maps-compose = { group = "com.google.maps.android", name = "maps-compose", version.ref = "mapsCompose" }
+# MapLibre Native Android. NOTE: this default artifact declares
+# <uses-feature android:name="android.hardware.vulkan.version" android:required="true" />, which is an
+# install filter. org.maplibre.gl:android-sdk-opengl at the same version is byte-for-byte the same API
+# with no Vulkan requirement — swap the name here if device coverage matters. See the Stage A report.
+maplibre-android = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibre" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
 org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 [plugins]

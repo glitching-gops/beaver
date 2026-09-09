@@ -2,7 +2,6 @@ package com.gops.spatialmapper.measure
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -46,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gops.spatialmapper.capture.CameraIntrinsicsSnapshot
+import com.gops.spatialmapper.capture.rotateBitmapClockwise
 import com.gops.spatialmapper.map.formatCanopyDiameter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -465,11 +465,12 @@ private fun FramingPanel(
 
 /**
  * Decodes [path] downsampled to at most [DISPLAY_IMAGE_MAX_SIDE] px on its long side and rotates it
- * upright.
+ * upright via [rotateBitmapClockwise].
  *
- * [rotationDegrees] is applied clockwise: the ARCore path saves the raw sensor image (typically 90°
- * off) while CameraX already writes its JPEG upright. Getting this wrong would show the operator a
- * sideways photo and swap which axis each handle measures.
+ * In practice every capture path now writes its JPEG bytes already upright (see
+ * [com.gops.spatialmapper.capture.saveArFrameAsJpeg]'s doc), so [rotationDegrees] is 0 here and this
+ * is a no-op — the parameter and the rotation call stay as defense in depth for any future capture
+ * path that doesn't uphold that invariant, rather than silently trusting it.
  *
  * Downsampling costs no accuracy: the ellipse is measured in display pixels and converted back to
  * captured-image pixels through the camera intrinsics, which are independent of this bitmap's size.
@@ -491,13 +492,7 @@ private fun loadUprightBitmap(path: String, rotationDegrees: Int): Bitmap? {
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         val decoded = BitmapFactory.decodeFile(path, options) ?: return null
-
-        val normalized = ((rotationDegrees % 360) + 360) % 360
-        if (normalized == 0) return decoded
-
-        val matrix = Matrix().apply { postRotate(normalized.toFloat()) }
-        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-            .also { if (it !== decoded) decoded.recycle() }
+        rotateBitmapClockwise(decoded, rotationDegrees)
     } catch (e: Exception) {
         Log.w(TAG, "Decoding $path failed", e)
         null

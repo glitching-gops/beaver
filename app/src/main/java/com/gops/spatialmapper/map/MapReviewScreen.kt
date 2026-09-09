@@ -48,6 +48,8 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.gops.spatialmapper.area.formatArea
+import com.gops.spatialmapper.area.polygonAreaSquareMeters
 import com.gops.spatialmapper.data.SessionEntity
 import com.gops.spatialmapper.data.SessionRepository
 import com.gops.spatialmapper.measure.CanopyMeasurement
@@ -246,7 +248,8 @@ fun MapReviewScreen(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = "Canopy ${formatCanopyDiameter(radiusMeters * 2.0)} across",
+                    text = "Canopy ${formatCanopyDiameter(radiusMeters * 2.0)} across · " +
+                        formatArea(polygonAreaSquareMeters(canopy)),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -333,7 +336,9 @@ private fun CaptureTelemetry.toSessionEntity(
     canopyDiameterVerticalMeters = measurement.verticalDiameterMeters,
     label = label,
     polygonVertices = canopy,
-    areaSquareMeters = null
+    // Derived from the CONFIRMED outline, not from the framed diameter: the operator may have
+    // dragged the radius handle after framing, and the polygon is the thing they signed off on.
+    areaSquareMeters = polygonAreaSquareMeters(canopy)
 )
 
 /** Debug breadcrumb (filter Logcat by tag [MAP_REVIEW_TAG]) mirroring what just got persisted. */
@@ -345,6 +350,7 @@ private fun logAssetState(entity: SessionEntity) {
         MAP_REVIEW_TAG,
         "Persisting plant: label='${entity.label.ifBlank { "(none)" }}' " +
             "canopy=${entity.canopyDiameterMeters?.let { "%.2f m".format(it) } ?: "—"} " +
+            "area=${entity.areaSquareMeters?.let { "%.2f m2".format(it) } ?: "—"} " +
             "photo=${entity.photoPath} outline=$outlineText"
     )
 }

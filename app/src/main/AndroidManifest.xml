@@ -12,11 +12,29 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- SCOUT MODE (live position tracking while walking a block).
+
+         All three are NORMAL, install-time permissions — there is nothing to request at runtime for
+         the two FOREGROUND_SERVICE_* ones; they are granted from this manifest at install.
+         POST_NOTIFICATIONS is the exception: runtime since API 33, and asked for at the moment the
+         operator first starts scouting (see rememberScoutToggle). Denying it does not stop tracking,
+         it only suppresses the "tap to return" notification.
+
+         DELIBERATELY ABSENT: ACCESS_BACKGROUND_LOCATION. A location-typed foreground service started
+         while the app is visible may keep using foreground location for as long as it runs, which is
+         exactly the Scout lifecycle. Background location is for receiving fixes with NO foreground
+         service at all — we never do that, and requesting it would trigger the Play Store's
+         background-location review for a capability the app does not use. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- ARCore is optional: the app must still install and run (in geometry-fallback mode) on
          devices without ARCore/Depth support, per the "any Android 14+ device" requirement. -->
     <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
 
     <application
+        android:name=".SpatialMapperApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -37,10 +55,17 @@
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}" />
 
+        <!-- Locked to portrait: both the AR capture path (raw sensor image corrected by the fixed
+             per-device SENSOR_ORIENTATION constant, see CameraIntrinsics.kt) and the compass/pitch
+             sensor fusion (TelemetryTracker.onSensorChanged) assume the phone is held upright in its
+             natural orientation and do not compensate for the device's current display rotation. A
+             landscape capture under the unlocked default would silently produce a sideways photo, a
+             swapped canopy measurement, and a garbage pitch reading, all from this one assumption. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.SpatialMapper">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -48,6 +73,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Scout mode's location tracker.
+
+             foregroundServiceType="location" is REQUIRED from API 34 and must match the type passed
+             to startForeground() in code — declaring it in only one of the two places throws
+             MissingForegroundServiceTypeException at start time.
+
+             exported="false": nothing outside the app has any business starting position tracking.
+             stopWithTask="false": tracking deliberately survives the operator swiping the app off the
+             recents list, because a phone goes in a pocket while walking and the recents gesture is
+             easy to trigger by accident. The persistent notification (and its Stop action) remains
+             the way out. -->
+        <service
+            android:name=".scout.ScoutLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location"
+            android:stopWithTask="false" />
     </application>
 
 </manifest>

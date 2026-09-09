@@ -91,6 +91,21 @@ class CanopyFramingTest {
     }
 
     // --- uprightImageSize ---------------------------------------------------------------------
+    //
+    // GAP THESE TESTS CANNOT CLOSE (see the real capture-side bug this class of test missed):
+    // uprightImageSize() and the rotation helpers below only ever verify SELF-CONSISTENCY against
+    // synthetic width/height numbers — that a 90°/270° rotation swaps W and H, that the longest side
+    // is preserved. They cannot and do not confirm that a 90° rotation is applied in the correct
+    // DIRECTION (clockwise vs counterclockwise) for real device output, because a backwards-but-
+    // internally-consistent rotation swaps W and H identically to a correct one — only the resulting
+    // image CONTENT differs. That gap is exactly what let a real bug ship undetected: the actual
+    // defect that produced a swapped Framed width/height on device was not a wrong rotation
+    // direction, but a fallback code path (MainActivity's AR-intrinsics-unavailable branch) silently
+    // reporting rotationDegrees=0 for an image that still needed 90°, which no synthetic-dimension
+    // test could catch since it never exercises that fallback at all. Direction correctness is now
+    // covered separately by an instrumented test against real Bitmap/Matrix content — see
+    // ImageRotationInstrumentedTest in app/src/androidTest — because Bitmap/Matrix aren't available
+    // in these local, Android-framework-free unit tests.
 
     @Test
     fun `upright size swaps axes for a quarter-turn sensor image`() {

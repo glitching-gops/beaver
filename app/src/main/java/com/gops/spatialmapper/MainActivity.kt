@@ -96,6 +96,9 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 private const val TAG = "SpatialMapperCamera"
+
+/** Tag for the ARCore create/release breadcrumbs — see the note in [ArDepthCameraFeed]. */
+private const val ARCORE_LIFECYCLE_TAG = "SpatialMapperArLifecycle"
 private const val TELEMETRY_TAG = "SpatialMapperTelemetry"
 
 /** How long to wait for the capture path to hand back a written JPEG before giving up on it. */
@@ -200,6 +203,10 @@ class MainActivity : ComponentActivity() {
                 var reviewRequest by remember { mutableStateOf<ReviewRequest?>(null) }
                 var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var mapFocusSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
+                // Which saved survey track, if any, is overlaid on the Map tab. Hoisted next to
+                // mapFocusSessionId because it is the same kind of state — a cross-tab "show me
+                // this one thing" request raised from History and honoured by Map.
+                var mapOverlaySurveyId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var identifyRequest by remember { mutableStateOf<IdentifyRequest?>(null) }
 
                 val permissionLauncher = rememberLauncherForActivityResult(
@@ -262,7 +269,10 @@ class MainActivity : ComponentActivity() {
                                         onClick = {
                                             // Reaching Map from the bar always means "show me
                                             // everything" — only "View on map" sets a focus.
-                                            if (tab == AppTab.MAP) mapFocusSessionId = null
+                                            if (tab == AppTab.MAP) {
+                                                mapFocusSessionId = null
+                                                mapOverlaySurveyId = null
+                                            }
                                             selectedTab = tab
                                         },
                                         icon = { Icon(tab.icon, contentDescription = null) },
@@ -354,6 +364,15 @@ class MainActivity : ComponentActivity() {
                                     onSelectSession = { selectedSessionId = it },
                                     onViewOnMap = { sessionId ->
                                         mapFocusSessionId = sessionId
+                                        mapOverlaySurveyId = null
+                                        selectedTab = AppTab.MAP
+                                    },
+                                    // Opening a survey clears any single-tree focus: the operator
+                                    // asked to see a track, and the focused-tree camera move would
+                                    // fight the fit-to-track one for the same camera.
+                                    onViewSurveyOnMap = { surveyId ->
+                                        mapOverlaySurveyId = surveyId
+                                        mapFocusSessionId = null
                                         selectedTab = AppTab.MAP
                                     },
                                     onIdentify = { sessionId, label, origin ->
@@ -365,6 +384,7 @@ class MainActivity : ComponentActivity() {
                             AppTab.MAP -> {
                                 GlobalMapScreen(
                                     focusedSessionId = mapFocusSessionId,
+                                    overlaySurveyId = mapOverlaySurveyId,
                                     // Tapping a canopy opens that session's detail directly, with no
                                     // intermediate preview — which means landing in the History tab,
                                     // since detail is History's sub-screen.
@@ -373,6 +393,7 @@ class MainActivity : ComponentActivity() {
                                         selectedTab = AppTab.HISTORY
                                     },
                                     onClearFocus = { mapFocusSessionId = null },
+                                    onClearSurveyOverlay = { mapOverlaySurveyId = null },
                                     modifier = screenModifier
                                 )
                             }
@@ -754,6 +775,27 @@ private fun ArDepthCameraFeed(
     val currentOnDistance by rememberUpdatedState(onDistanceMeters)
     val currentOnCaptureResult by rememberUpdatedState(onCaptureResult)
 
+    // ARCORE TEARDOWN BREADCRUMB.
+    //
+    // This feed is only composed on the Capture tab, and MainActivity dispatches tabs with a plain
+    // `when`, so leaving Capture removes ARScene from the composition. That fires AndroidView's
+    // onRelease -> ARSceneView.destroy() -> destroyArCore() -> Session.close(), and SceneView.destroy()
+    // additionally nulls its `lifecycle` property, whose setter removes the lifecycle observer — so a
+    // destroyed view cannot be resurrected by a later Activity ON_RESUME. Scout mode therefore never
+    // runs alongside a live ARCore session on the Map tab; there is no shared session to tear down,
+    // because the session's owner is the composable itself.
+    //
+    // Session.close() is dispatched to a background executor by the library (it blocks for seconds),
+    // so the teardown is asynchronous. These two log lines exist to make that verifiable in the field
+    // rather than merely asserted: filter logcat by ARCORE_LIFECYCLE_TAG and you should see exactly
+    // one "created" on entering Capture and one "released" on leaving it.
+    DisposableEffect(Unit) {
+        Log.i(ARCORE_LIFECYCLE_TAG, "ARScene entering composition (Capture tab)")
+        onDispose {
+            Log.i(ARCORE_LIFECYCLE_TAG, "ARScene released — ARCore session closing")
+        }
+    }
+
     ARScene(
         modifier = modifier.fillMaxSize(),
         planeRenderer = false,
@@ -773,7 +815,7 @@ private fun ArDepthCameraFeed(
                 // image acquireCameraImage() returns, which is exactly the JPEG written below, so
                 // focal length and photo are guaranteed to share a pixel space.
                 val intrinsics = frame.cameraIntrinsicsSnapshot(sensorOrientation)
-                val saved = if (file != null) saveArFrameAsJpeg(frame, file) else false
+                val saved = if (file != null) saveArFrameAsJpeg(frame, file, sensorOrientation) else false
                 captureRequest.pending = false
                 currentOnCaptureResult(if (saved) file else null, intrinsics)
             }

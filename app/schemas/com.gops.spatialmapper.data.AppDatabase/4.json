@@ -1,0 +1,243 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 4,
+    "identityHash": "483216112a40a75b2afd79e4c69b93f2",
+    "entities": [
+      {
+        "tableName": "sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMillis` INTEGER NOT NULL, `photoPath` TEXT NOT NULL, `latitude` REAL, `longitude` REAL, `gpsAccuracyMeters` REAL, `headingDegrees` REAL, `headingIsTrueNorth` INTEGER NOT NULL, `pitchDegrees` REAL, `compassReliability` TEXT NOT NULL, `distanceMeters` REAL, `distanceMethod` TEXT, `projectedLatitude` REAL, `projectedLongitude` REAL, `focalLengthPixels` REAL, `imageWidthPixels` INTEGER, `imageHeightPixels` INTEGER, `canopyDiameterMeters` REAL, `canopyDiameterHorizontalMeters` REAL, `canopyDiameterVerticalMeters` REAL, `label` TEXT NOT NULL, `polygonVertices` TEXT NOT NULL, `speciesScientificName` TEXT, `speciesCommonName` TEXT, `speciesGenus` TEXT, `speciesConfidence` REAL, `speciesSource` TEXT, `areaSquareMeters` REAL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoPath",
+            "columnName": "photoPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gpsAccuracyMeters",
+            "columnName": "gpsAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingDegrees",
+            "columnName": "headingDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingIsTrueNorth",
+            "columnName": "headingIsTrueNorth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pitchDegrees",
+            "columnName": "pitchDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "compassReliability",
+            "columnName": "compassReliability",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "distanceMethod",
+            "columnName": "distanceMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "projectedLatitude",
+            "columnName": "projectedLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "projectedLongitude",
+            "columnName": "projectedLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "focalLengthPixels",
+            "columnName": "focalLengthPixels",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "imageWidthPixels",
+            "columnName": "imageWidthPixels",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "imageHeightPixels",
+            "columnName": "imageHeightPixels",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "canopyDiameterMeters",
+            "columnName": "canopyDiameterMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "canopyDiameterHorizontalMeters",
+            "columnName": "canopyDiameterHorizontalMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "canopyDiameterVerticalMeters",
+            "columnName": "canopyDiameterVerticalMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "polygonVertices",
+            "columnName": "polygonVertices",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speciesScientificName",
+            "columnName": "speciesScientificName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesCommonName",
+            "columnName": "speciesCommonName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesGenus",
+            "columnName": "speciesGenus",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesConfidence",
+            "columnName": "speciesConfidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speciesSource",
+            "columnName": "speciesSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "areaSquareMeters",
+            "columnName": "areaSquareMeters",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "identification_attempts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestampMillis` INTEGER NOT NULL, `photoPath` TEXT NOT NULL, `candidatesJson` TEXT NOT NULL, `confirmedScientificName` TEXT, FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoPath",
+            "columnName": "photoPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidatesJson",
+            "columnName": "candidatesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmedScientificName",
+            "columnName": "confirmedScientificName",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_identification_attempts_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_identification_attempts_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '483216112a40a75b2afd79e4c69b93f2')"
+    ]
+  }
+}

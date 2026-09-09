@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import com.gops.spatialmapper.area.polygonAreaSquareMeters
 import java.io.File
 
 /**
@@ -23,6 +24,50 @@ class SessionRepository private constructor(
     suspend fun insert(session: SessionEntity): Long = dao.insert(session)
 
     suspend fun getById(id: Long): SessionEntity? = dao.getSessionById(id)
+
+    // --- Area backfill ---
+
+    /**
+     * Computes and stores [SessionEntity.areaSquareMeters] for every row that is missing one, and
+     * returns how many rows were written.
+     *
+     * Exists because the column shipped nullable and unpopulated: rows captured before area
+     * calculation existed carry a confirmed footprint but no area. Rather than a data migration
+     * (Room migrations run raw SQL, and the area of a spherical polygon is not something SQLite can
+     * compute from a "lat,lng;..." string), this is a plain idempotent pass over the rows the DAO
+     * says still need it — see [SessionDao.getSessionsMissingArea] for why it self-terminates.
+     *
+     * Row-at-a-time rather than one big transaction: the whole point is that a partial run is
+     * useful. If the process dies halfway, the rows already written stay written and the next launch
+     * picks up exactly the remainder, because "needs backfilling" is a property of the row itself
+     * rather than of a stored migration flag.
+     *
+     * A row whose stored vertices refuse to parse into a polygon is skipped and left null — it has
+     * no area, and writing 0.0 would be a fabricated measurement.
+     */
+    suspend fun backfillMissingAreas(): Int = withContext(Dispatchers.IO) {
+        val pending = dao.getSessionsMissingArea()
+        if (pending.isEmpty()) return@withContext 0
+
+        var updated = 0
+        var skipped = 0
+        pending.forEach { session ->
+            val area = polygonAreaSquareMeters(session.polygonVertices)
+            if (area == null) {
+                skipped++
+                return@forEach
+            }
+            runCatching { dao.updateArea(session.id, area) }
+                .onSuccess { updated++ }
+                .onFailure { Log.w(TAG, "Area backfill failed for session ${session.id}", it) }
+        }
+        Log.i(
+            TAG,
+            "Area backfill: ${pending.size} candidate row(s), $updated updated, $skipped skipped " +
+                "(unusable footprint)"
+        )
+        updated
+    }
 
     // --- Species identification ---
 

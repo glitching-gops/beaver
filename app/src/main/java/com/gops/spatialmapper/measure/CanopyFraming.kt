@@ -90,11 +90,12 @@ fun displayToImagePixelScale(
 /**
  * Dimensions of the captured image once rotated upright, as (width, height).
  *
- * The AR capture path saves the RAW sensor image, which on a phone is typically 90° off, so the
- * intrinsics' width/height are swapped relative to the upright photo the operator frames on. (The
- * CameraX fallback writes its JPEG already upright and reports a rotation of 0.) Rotation does not
- * change the focal length — it only swaps which image axis is which — but it does decide which
- * dimension the ellipse's horizontal radius should be compared against.
+ * Every current capture path reports a snapshot whose dimensions already describe the file as saved
+ * on disk — physically rotated upright at write time, see
+ * [com.gops.spatialmapper.capture.saveArFrameAsJpeg] — so `rotationDegrees` is 0 in practice and this
+ * is an identity mapping. It stays as a general-purpose function (not inlined at the one call site)
+ * so a future capture path that reports a genuine pending rotation is still handled correctly rather
+ * than by convention.
  */
 fun CameraIntrinsicsSnapshot.uprightImageSize(): Pair<Int, Int> {
     val normalized = ((rotationDegrees % 360) + 360) % 360

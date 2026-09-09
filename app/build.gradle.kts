@@ -57,6 +57,43 @@ android {
         // generated field silently doesn't exist.
         buildConfig = true
     }
+
+    testOptions {
+        unitTests {
+            // Make the mockable android.jar's stubs RETURN DEFAULTS instead of throwing
+            // "Method ... not mocked".
+            //
+            // Needed because the classes worth unit-testing are not all pure: ScoutSession folds
+            // location fixes into state and logs as it goes, and android.util.Log is stubbed. The
+            // alternative — routing every log call through an injectable interface — would be a
+            // logging abstraction invented solely to satisfy the test runner.
+            //
+            // This does NOT cover org.json: a stub returning null is no more useful than one that
+            // throws when the test is about parsing, which is why the real implementation is on the
+            // test classpath instead (see libs.versions.toml).
+            isReturnDefaultValues = true
+        }
+    }
+
+    // Room's exported schema JSON, one file per version, checked into source control.
+    //
+    // Turned on with the first REAL migration (v4 -> v5). Until now every schema change wiped the
+    // database, so there was nothing a schema history could protect. From here the JSON is the
+    // contract: Room diffs the migrated database against it at open time and throws if they disagree,
+    // and MigrationTestHelper needs the OLD version's file to build an old database to migrate.
+    // Deleting or regenerating a released version's file destroys the ability to test upgrades into
+    // it — treat them as append-only.
+    sourceSets {
+        getByName("androidTest") {
+            assets.srcDirs(files("$projectDir/schemas"))
+        }
+    }
+}
+
+// Where the schema JSON above is written. Must be a KSP arg (not a plain annotation-processor
+// option) because Room runs through KSP in this project.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -90,8 +127,23 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    // MigrationTestHelper: builds a database at an old schema version, runs the real migration
+    // against it, and validates the result against the exported JSON.
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // STAGE A: MapLibre engine proof of concept. DEBUG ONLY, on purpose.
+    //
+    // debugImplementation rather than implementation, with all PoC code in src/debug/, so this stage
+    // is genuinely additive: the release APK is unchanged — it gains no 18 MB native library, no
+    // Vulkan <uses-feature> install filter, and none of the ACCESS_COARSE_LOCATION /
+    // ACCESS_WIFI_STATE permissions MapLibre's manifest merges in. Backing the stage out is deleting
+    // src/debug/ and these two lines.
+    //
+    // src/debug CAN see src/main, which is what lets the PoC call the real generateCanopyPolygon
+    // rather than a copy of it.
+    debugImplementation(libs.maplibre.android)
 }
 
 // Secrets Gradle Plugin: injects the Maps API key into the manifest's ${MAPS_API_KEY} placeholder

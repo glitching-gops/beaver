@@ -26,7 +26,10 @@ import com.google.android.gms.maps.model.LatLng
  *    in the audit log for the same reason as the sensor readings — a diameter is only interpretable
  *    if you can see the focal length and distance behind it.
  *  - User-confirmed data: [label], [polygonVertices] — what the human verified on the review screen.
- *  - [areaSquareMeters]: intentionally null for now; populated once area calc is built (later phase).
+ *  - [areaSquareMeters]: spherical area of [polygonVertices]. Still nullable, because a footprint
+ *    with fewer than three vertices genuinely has no area — and because rows saved before area
+ *    calculation existed are filled in by a startup backfill (SpatialMapperApplication) rather than
+ *    by a migration, so null also means "not backfilled yet".
  *
  * The photo itself is NOT stored as a BLOB — the JPEG stays where the capture pipeline already wrote
  * it and only its absolute [photoPath] is persisted here.
@@ -82,6 +85,9 @@ data class SessionEntity(
     val speciesConfidence: Double? = null,   // 0..1, as reported by the identification service
     val speciesSource: String? = null,       // "plantnet" today; a column so a second source can exist
 
-    // --- Deferred (later phase) ---
+    // --- Derived ---
+    // Spherical area of [polygonVertices], in square meters. Written at save time from the confirmed
+    // outline, and backfilled at startup for rows that predate the calculation. Defaulted to null so
+    // the DAO's targeted UPDATE, not the constructor, remains the only way it gets set after a save.
     val areaSquareMeters: Double? = null
 )

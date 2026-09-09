@@ -7,27 +7,44 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 /**
- * The app's Room database: [SessionEntity] (one row per confirmed capture) plus
- * [IdentificationAttemptEntity] (every species-identification submission for a session). See the
- * design note on SessionEntity for the multi-capture migration path.
+ * The app's Room database: [SessionEntity] (one row per confirmed capture),
+ * [IdentificationAttemptEntity] (every species-identification submission for a session),
+ * [RemovedTreeEntity] (a tree visible in the imagery but gone on the ground), and
+ * [SurveyTrackEntity] (a deliberately recorded walk). See the design note on SessionEntity for the
+ * multi-capture migration path.
  *
- * exportSchema is false: schema export is only useful once we start writing real migrations, and
- * enabling it requires wiring a schema output directory. When the first data-preserving migration
- * lands, flip this to true, add the KSP `room.schemaLocation` arg, and check the JSON schema in.
+ * exportSchema is now TRUE, and `app/schemas/` is checked in. It was off while every schema change
+ * wiped the database — there was no history worth keeping — and the previous revision of this file
+ * said to flip it "when the first data-preserving migration lands". This is that version.
  *
- * VERSION 4 — DESTRUCTIVE. v4 adds the five `species*` columns to `sessions` and introduces the
- * `identification_attempts` table. As with every schema change so far there is no data migration: it
- * lands with [RoomDatabase.Builder.fallbackToDestructiveMigration] below, so an existing database is
- * DROPPED and recreated empty — anything already captured on a test device is lost on first launch
- * after this update. That remains acceptable only because there is still no production field data. If
- * real data ever exists, this is the wrong call and a proper [androidx.room.migration.Migration] must
- * be written instead — and for this particular change an additive one would be easy (five ALTER TABLE
- * ADD COLUMN plus a CREATE TABLE), so it is worth reconsidering the moment data matters.
+ * VERSION 6 — THE SECOND REAL MIGRATION, AND STILL NO DESTRUCTIVE FALLBACK.
+ *
+ * v4 -> v5 added the `removed_trees` table via [MIGRATION_4_5]; v5 -> v6 adds `survey_tracks` via
+ * [MIGRATION_5_6]. Both are single CREATE TABLE statements for tables that did not previously exist
+ * and neither touches an existing table, so every row a user already has survives. That is not an
+ * aspiration — it is a property of the statements, verified in MigrationTest and in
+ * `tools/verify_migration.py`.
+ *
+ * `fallbackToDestructiveMigration` is GONE, deliberately, and should not come back. This app is a
+ * documentation tool for a government officer: the rows in it are field observations that cannot be
+ * re-collected by walking back to the same tree a month later. The old policy traded that data for
+ * developer convenience on every version bump. The new policy is that an unhandled version mismatch
+ * throws IllegalStateException on open — loudly, on the developer's own device, before release —
+ * rather than silently emptying somebody's survey. A crash is a bug you can ship a fix for; a wipe
+ * is data that no longer exists.
+ *
+ * Consequence for anyone changing the schema from here: bump [version], add a Migration to
+ * [ALL_MIGRATIONS], and let the exported JSON regenerate. Skipping any of the three fails fast.
  */
 @Database(
-    entities = [SessionEntity::class, IdentificationAttemptEntity::class],
-    version = 4,
-    exportSchema = false
+    entities = [
+        SessionEntity::class,
+        IdentificationAttemptEntity::class,
+        RemovedTreeEntity::class,
+        SurveyTrackEntity::class
+    ],
+    version = 6,
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +52,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
 
     abstract fun identificationAttemptDao(): IdentificationAttemptDao
+
+    abstract fun removedTreeDao(): RemovedTreeDao
+
+    abstract fun surveyTrackDao(): SurveyTrackDao
 
     companion object {
         @Volatile
@@ -47,13 +68,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "spatialmapper.db"
                 )
-                    // Destructive on ANY version mismatch: wipe and recreate rather than migrate.
-                    // Chosen deliberately for all three schema changes so far (v1→v2 category
-                    // removal, v2→v3 segmentation removal, v3→v4 species identification) because no
-                    // production data exists. dropAllTables = true drops every table Room manages
-                    // (not just changed ones), which is the honest behaviour for a wipe-and-recreate
-                    // policy — and now that there are two tables, it is what keeps them consistent.
-                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    // The whole point of this phase. No fallbackToDestructiveMigration: an upgrade
+                    // path that isn't covered here is a build error waiting to happen, not a licence
+                    // to delete the user's records. See the class note.
+                    .addMigrations(*ALL_MIGRATIONS)
                     .build()
                     .also { INSTANCE = it }
             }

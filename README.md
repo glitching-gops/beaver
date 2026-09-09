@@ -40,6 +40,22 @@ Built as an academic / portfolio project. Kotlin, Jetpack Compose, minSdk 34.
 - **Global map view.** All saved trees drawn as canopy polygons on one satellite map, with tap-through
   to the underlying record.
 
+## Screenshots
+
+![Session detail with confirmed species identification](docs/screenshots/session-detail.png)
+*Session detail — the captured photo alongside a confirmed Pl@ntNet species identification.*
+
+![Raw telemetry audit log for a session](docs/screenshots/telemetry-audit-log.png)
+*The full raw-sensor audit trail kept alongside the confirmed measurement.*
+
+Every session retains both records shown above: the raw sensor-derived telemetry — GPS, heading,
+pitch, and which distance method was used, exactly as captured — and the operator-corrected result it
+produced. Neither overwrites the other, so any figure shown elsewhere in the app can always be traced
+back to the reading it came from.
+
+![Confirmed canopy footprint on the satellite map](docs/screenshots/canopy-on-map.png)
+*The confirmed canopy footprint over satellite imagery, at its projected coordinate.*
+
 ## How it works
 
 The capture pipeline is a linear sequence of five steps, with the operator confirming the result at
@@ -190,7 +206,9 @@ The Maps key reaches the app as a manifest placeholder; the Pl@ntNet key is read
 Or open the project in Android Studio and run the `app` configuration.
 
 **arm64-v8a only.** `app/build.gradle.kts` sets `abiFilters += "arm64-v8a"`, so debug builds **will
-not install on the standard x86_64 emulator**. This is intentional — the measurement path needs a
+not install on the standard x86_64 emulator** — if `installDebug` fails with an ABI/INSTALL_FAILED
+error, that's why, not a broken build. Only a physical arm64 device (or an arm64 emulator image, which
+most default AVDs are not) will accept the APK. This is intentional — the measurement path needs a
 real camera, compass, and GPS, none of which an emulator provides meaningfully. Add `"x86_64"` to
 that list if you want to run the non-sensor screens (history, maps, identification) on an emulator.
 

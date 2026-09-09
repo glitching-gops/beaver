@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DEBUG-ONLY manifest additions for the Stage A MapLibre proof of concept.
+
+    Everything in this file merges into debug builds only. The release manifest — and therefore the
+    shipped app — is completely unaffected: no extra activity, no extra launcher icon, and none of the
+    permissions or <uses-feature> entries MapLibre's own AAR manifest contributes (ACCESS_WIFI_STATE,
+    ACCESS_COARSE_LOCATION, and a REQUIRED android.hardware.vulkan.version feature that acts as a
+    Play Store install filter).
+
+    Backing the stage out is deleting src/debug/ and the debugImplementation line in build.gradle.kts.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <!--
+            A second LAUNCHER entry, so the PoC is one tap away on a test device without wiring
+            anything into the app's own navigation. exported="true" is required for a LAUNCHER
+            activity and is safe here: the screen reads no arguments and touches no app data.
+
+            No android:screenOrientation, unlike every other activity in this app. That is the point
+            — the rest of the app is portrait-locked for AR/compass reasons, which would make it
+            impossible to test whether MapView survives a configuration change. Here it rotates.
+        -->
+        <activity
+            android:name=".maplibrepoc.MapLibrePocActivity"
+            android:exported="true"
+            android:label="MapLibre PoC"
+            android:theme="@style/Theme.SpatialMapper">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

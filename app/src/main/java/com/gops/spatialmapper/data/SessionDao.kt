@@ -55,6 +55,26 @@ interface SessionDao {
         source: String?
     )
 
+    /**
+     * Rows that the area backfill has to visit: no area yet, but a footprint to derive one from.
+     *
+     * Both halves of the filter are deliberate. `areaSquareMeters IS NULL` makes the backfill
+     * idempotent — a row that has already been computed is never revisited, so the startup pass is
+     * a no-op from the second launch onwards. `polygonVertices != ''` skips rows that could never
+     * produce an area (the converter serializes an empty list to the empty string), so they don't
+     * get re-read on every single launch forever.
+     */
+    @Query("SELECT * FROM sessions WHERE areaSquareMeters IS NULL AND polygonVertices != ''")
+    suspend fun getSessionsMissingArea(): List<SessionEntity>
+
+    /**
+     * Writes one computed area. A targeted UPDATE for the same reason [updateSpecies] is one: the
+     * backfill holds rows read at startup and must not write back any other column from that
+     * possibly-stale snapshot.
+     */
+    @Query("UPDATE sessions SET areaSquareMeters = :areaSquareMeters WHERE id = :id")
+    suspend fun updateArea(id: Long, areaSquareMeters: Double)
+
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

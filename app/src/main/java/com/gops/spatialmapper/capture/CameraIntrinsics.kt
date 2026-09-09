@@ -1,7 +1,9 @@
 package com.gops.spatialmapper.capture
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.util.Log
@@ -11,6 +13,24 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 
 private const val TAG = "SpatialMapperIntrinsics"
+
+/**
+ * Rotates [bitmap] clockwise by [degrees] (normalized to [0, 360)). Returns [bitmap] itself,
+ * unrecycled, when no rotation is needed.
+ *
+ * The one shared implementation of "make this image upright" in the app — used both when a captured
+ * JPEG is physically re-oriented at save time ([com.gops.spatialmapper.capture.saveArFrameAsJpeg]) and
+ * when a photo is decoded for display. A rotation-direction bug fixed in one copy and left in a second
+ * is exactly how this class of bug survives; there must only be one copy.
+ */
+fun rotateBitmapClockwise(bitmap: Bitmap, degrees: Int): Bitmap {
+    val normalized = ((degrees % 360) + 360) % 360
+    if (normalized == 0) return bitmap
+    val matrix = Matrix().apply { postRotate(normalized.toFloat()) }
+    val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    if (rotated !== bitmap) bitmap.recycle()
+    return rotated
+}
 
 /**
  * The camera model for a single capture: focal length in PIXELS plus the pixel dimensions those
@@ -41,10 +61,19 @@ data class CameraIntrinsicsSnapshot(
 /**
  * Reads the intrinsics of the CPU image backing this AR [Frame].
  *
- * `Frame.camera.imageIntrinsics` describes exactly the image `acquireCameraImage()` returns — which
- * is the image [saveArFrameAsJpeg] writes to disk — so the focal length and the JPEG are guaranteed
- * to be in the same pixel space. (`textureIntrinsics` would describe the GPU texture instead, which
- * is a different resolution; using it here would silently scale every measurement.)
+ * `Frame.camera.imageIntrinsics` describes exactly the image `acquireCameraImage()` returns.
+ * (`textureIntrinsics` would describe the GPU texture instead, which is a different resolution; using
+ * it here would silently scale every measurement.)
+ *
+ * [rotationDegrees] must be the SAME value passed to [saveArFrameAsJpeg] for this frame — that
+ * function physically rotates the JPEG's pixel data by this amount before writing it to disk, so the
+ * dimensions reported here are swapped to match the file AS SAVED (post-rotation), and the returned
+ * snapshot's own `rotationDegrees` is always 0: nothing downstream owes this image any further
+ * rotation. Previously this reported ARCore's raw (pre-rotation) dimensions with the pending rotation
+ * left for consumers to apply — which meant a screen that forgot to apply it (or a fallback path that
+ * assumed 0 for an unrelated reason) would silently swap width and height. Standardizing on
+ * "the file on disk is always upright" removes that whole class of bug rather than requiring every
+ * consumer to get it right.
  *
  * MUST be called from inside `onSessionUpdated`, where the frame is valid. Returns null on any
  * failure rather than throwing — a capture without intrinsics is gated later, not crashed on.
@@ -52,16 +81,27 @@ data class CameraIntrinsicsSnapshot(
 fun Frame.cameraIntrinsicsSnapshot(rotationDegrees: Int): CameraIntrinsicsSnapshot? = try {
     val intrinsics = camera.imageIntrinsics
     val focalLength = intrinsics.focalLength       // [fx, fy] in pixels
-    val dimensions = intrinsics.imageDimensions    // [width, height] in pixels
+    val dimensions = intrinsics.imageDimensions    // [width, height] in pixels, PRE-rotation
     if (focalLength.size < 2 || dimensions.size < 2 || focalLength[0] <= 0f) {
         Log.w(TAG, "ARCore returned unusable intrinsics")
         null
     } else {
+        val normalized = ((rotationDegrees % 360) + 360) % 360
+        val (width, height) = if (normalized == 90 || normalized == 270) {
+            dimensions[1] to dimensions[0]
+        } else {
+            dimensions[0] to dimensions[1]
+        }
+        Log.d(
+            TAG,
+            "AR intrinsics: raw ${dimensions[0]}x${dimensions[1]}, rotationDegrees=$rotationDegrees " +
+                "(normalized=$normalized) -> reporting ${width}x${height} @ rotationDegrees=0"
+        )
         CameraIntrinsicsSnapshot(
             focalLengthPixels = focalLength[0],
-            imageWidthPixels = dimensions[0],
-            imageHeightPixels = dimensions[1],
-            rotationDegrees = rotationDegrees
+            imageWidthPixels = width,
+            imageHeightPixels = height,
+            rotationDegrees = 0
         )
     }
 } catch (e: Exception) {
@@ -106,8 +146,12 @@ fun backCameraIntrinsics(
             focalLengthPixels = focalLengthMm * longestImageSide / sensorLongMm,
             imageWidthPixels = imageWidthPixels,
             imageHeightPixels = imageHeightPixels,
-            // CameraX's ImageCapture already writes the JPEG upright (it applies the target
-            // rotation), so nothing further is needed on this path.
+            // Every capture path writes its JPEG bytes already rotated upright before this function
+            // ever runs: CameraX's ImageCapture applies the target rotation itself, and the AR path
+            // physically rotates in saveArFrameAsJpeg (see cameraIntrinsicsSnapshot's doc). This
+            // function is also reached as the AR path's fallback when ARCore's own intrinsics read
+            // fails for a frame — rotationDegrees = 0 must stay correct for BOTH origins, not just
+            // CameraX's, or this silently reintroduces the sideways-photo bug it once caused.
             rotationDegrees = 0
         )
     } catch (e: Exception) {
@@ -138,13 +182,17 @@ suspend fun fallbackIntrinsicsForPhoto(
  * SENSOR_ORIENTATION of the back camera: the clockwise rotation needed to bring the raw sensor image
  * upright when the device is held in its natural (portrait) orientation. Almost always 90 on phones.
  *
- * The AR path saves the raw sensor image without rotating it, so this is the rotation the framing
- * screen has to apply before "horizontal" means anything in world terms. Defaults to 90 if unavailable,
- * which is the near-universal value for a phone back camera.
+ * The AR path's raw sensor image is physically rotated by this amount before it is written to disk
+ * (see [saveArFrameAsJpeg]). This value is only correct while the device IS in its natural
+ * orientation at capture time — the app is locked to portrait (see AndroidManifest.xml) specifically
+ * so this constant stays valid; there is no runtime check for the device's current rotation.
+ * Defaults to 90 if unavailable, which is the near-universal value for a phone back camera.
  */
 fun backCameraSensorOrientation(context: Context): Int {
     val characteristics = backCameraCharacteristics(context) ?: return DEFAULT_SENSOR_ORIENTATION
-    return characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: DEFAULT_SENSOR_ORIENTATION
+    val value = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: DEFAULT_SENSOR_ORIENTATION
+    Log.d(TAG, "Back camera SENSOR_ORIENTATION = $value°")
+    return value
 }
 
 private const val DEFAULT_SENSOR_ORIENTATION = 90

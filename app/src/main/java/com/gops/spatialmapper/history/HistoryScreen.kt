@@ -30,6 +30,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +40,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.model.CameraPosition
@@ -63,8 +67,10 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.gops.spatialmapper.area.formatArea
 import com.gops.spatialmapper.data.SessionEntity
 import com.gops.spatialmapper.data.SessionRepository
+import com.gops.spatialmapper.export.ExportAllAction
 import com.gops.spatialmapper.identify.decodeCandidates
 import com.gops.spatialmapper.identify.sessionReferencePoint
 import com.gops.spatialmapper.map.CANOPY_FILL_COLOR
@@ -95,17 +101,40 @@ private val timestampFormat = SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.ge
  *                          passed along rather than re-read there, because it is what the proximity
  *                          check compares against and detail already has the row in hand.
  */
+/**
+ * The two kinds of record the History tab browses.
+ *
+ * A sub-tab here rather than a fourth bottom-bar destination, deliberately. Both are "things I have
+ * already recorded, listed newest first, tap to look at one, swipe-free delete" — the same activity
+ * over two record types, not two activities. Promoting surveys to the bottom bar would make the bar
+ * four-wide and imply the two are as far apart as Capture and Map, which they are not.
+ */
+private enum class HistorySection(val label: String) {
+    TREES("Trees"),
+    SURVEYS("Surveys")
+}
+
 @Composable
 fun HistoryScreen(
     selectedSessionId: Long?,
     onSelectSession: (Long?) -> Unit,
     onViewOnMap: (Long) -> Unit,
+    onViewSurveyOnMap: (Long) -> Unit,
     onIdentify: (sessionId: Long, label: String, origin: LatLng?) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // rememberSaveable so switching tabs and coming back does not silently drop the operator from
+    // Surveys back to Trees. Saved by name, matching how AppTab is persisted in MainActivity.
+    var section by rememberSaveable(stateSaver = HistorySectionSaver) {
+        mutableStateOf(HistorySection.TREES)
+    }
+
     if (selectedSessionId == null) {
         SessionList(
+            section = section,
+            onSelectSection = { section = it },
             onOpen = { onSelectSession(it) },
+            onOpenSurvey = onViewSurveyOnMap,
             modifier = modifier
         )
     } else {
@@ -120,9 +149,17 @@ fun HistoryScreen(
     }
 }
 
+private val HistorySectionSaver: Saver<HistorySection, String> = Saver(
+    save = { it.name },
+    restore = { name -> runCatching { HistorySection.valueOf(name) }.getOrDefault(HistorySection.TREES) }
+)
+
 @Composable
 private fun SessionList(
+    section: HistorySection,
+    onSelectSection: (HistorySection) -> Unit,
     onOpen: (Long) -> Unit,
+    onOpenSurvey: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -132,25 +169,84 @@ private fun SessionList(
 
     Column(modifier = modifier.fillMaxSize()) {
         // No back arrow: this is a tab root now, and the bottom bar is how you leave it.
-        ScreenTopBar(title = "History", onBack = null)
+        //
+        // Export lives here rather than on a session's detail because it is a bulk action over
+        // everything the list is showing — the same set, from the same screen. It is handed the
+        // already-collected list so the button and the rows beneath it can never disagree about
+        // what "all" means, and so it stays out of the database entirely.
+        ScreenTopBar(
+            title = "History",
+            onBack = null,
+            actions = { ExportAllAction(sessions = sessions) }
+        )
 
-        if (sessions.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No saved sessions yet.\nCapture, review on the map, and Save.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 14.sp
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(items = sessions, key = { it.id }) { session ->
-                    SessionRow(session = session, onClick = { onOpen(session.id) })
+        SectionSelector(selected = section, onSelect = onSelectSection)
+
+        when (section) {
+            HistorySection.SURVEYS -> SurveyList(onOpenOnMap = onOpenSurvey)
+
+            HistorySection.TREES -> if (sessions.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "No saved sessions yet.\nCapture, review on the map, and Save.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp
+                    )
                 }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(items = sessions, key = { it.id }) { session ->
+                        SessionRow(session = session, onClick = { onOpen(session.id) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Two-segment switch between Trees and Surveys.
+ *
+ * Hand-rolled rather than Material3's SegmentedButton, which is still an experimental API: adding an
+ * opt-in annotation to this project for a two-item toggle would buy nothing the six lines below do
+ * not, and the app already hand-rolls its accordion and its cards in the same vocabulary.
+ */
+@Composable
+private fun SectionSelector(selected: HistorySection, onSelect: (HistorySection) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        HistorySection.entries.forEach { entry ->
+            val active = entry == selected
+            Surface(
+                onClick = { onSelect(entry) },
+                shape = RoundedCornerShape(10.dp),
+                color = if (active) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = entry.label,
+                    fontSize = 14.sp,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    color = if (active) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
             }
         }
     }
@@ -201,7 +297,7 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Area: " + areaText(session.areaSquareMeters),
+                    text = "Area: " + formatArea(session.areaSquareMeters),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -302,7 +398,7 @@ private fun SessionDetail(
                 )
             }
             DetailRow("Label", current.label.ifBlank { "(none)" })
-            DetailRow("Area", areaText(current.areaSquareMeters))
+            DetailRow("Area", formatArea(current.areaSquareMeters))
             DetailRow("Saved", timestampFormat.format(Date(current.timestampMillis)))
 
             Spacer(Modifier.height(16.dp))
@@ -637,9 +733,18 @@ private fun FootprintMap(session: SessionEntity) {
     }
 }
 
-/** Top bar with an optional back affordance — tab roots pass null, sub-screens pass a handler. */
+/**
+ * Top bar with an optional back affordance — tab roots pass null, sub-screens pass a handler — and an
+ * optional trailing [actions] slot for screen-level actions such as Export all.
+ *
+ * The title is weighted so actions pin to the right edge regardless of how long it is.
+ */
 @Composable
-private fun ScreenTopBar(title: String, onBack: (() -> Unit)?) {
+private fun ScreenTopBar(
+    title: String,
+    onBack: (() -> Unit)?,
+    actions: @Composable () -> Unit = {}
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -652,7 +757,13 @@ private fun ScreenTopBar(title: String, onBack: (() -> Unit)?) {
         } else {
             Spacer(Modifier.width(12.dp))
         }
-        Text(text = title, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+        Text(
+            text = title,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 18.sp,
+            modifier = Modifier.weight(1f)
+        )
+        actions()
     }
     HorizontalDivider()
 }
@@ -740,9 +851,6 @@ private fun decodeDownsampled(path: String, reqSizePx: Int): Bitmap? {
         null
     }
 }
-
-private fun areaText(area: Double?): String =
-    area?.let { "%.1f m²".format(it) } ?: "— (not computed)"
 
 /** Measured crown diameter, or an explicit dash for rows saved without one. */
 private fun canopyText(diameterMeters: Double?): String =
