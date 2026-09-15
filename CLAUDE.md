@@ -42,6 +42,10 @@ git push
 - Room 2.8.4 (stable 2.x). Room 3 is alpha and a different artifact (`androidx.room3`).
 - MapLibre 13.6.1 is `debugImplementation` only, for the PoC in `app/src/debug/`. Don't let tooling
   bump it to a `-pre` build, and nothing in `src/main` may reference it.
+- The PoC's offline basemap is an MBTiles file built on the desktop by
+  `tools/basemap/make_sentinel2_mbtiles.py` (own venv, `tools/basemap/requirements.txt`). Archives
+  (`*.mbtiles`) are git-ignored and reach the phone by `adb push` into
+  `/sdcard/Android/data/com.gops.spatialmapper/files/`.
 
 ## Room: migrations
 

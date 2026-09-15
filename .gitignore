@@ -107,6 +107,14 @@ graphify-out/
 /SpatialMapper_*.jpg
 *.hprof
 
+# Offline basemap archives and their build outputs (tools/basemap/). Regenerable from the script,
+# megabytes each, and they carry the imagery of a specific field site. The phone gets them via adb.
+*.mbtiles
+*.mbtiles.partial
+*.pmtiles
+tools/basemap/out/
+tools/basemap/.venv/
+
 ### ---------------------------------------------------------------------------------------------
 ### OS / editor cruft
 ### ---------------------------------------------------------------------------------------------

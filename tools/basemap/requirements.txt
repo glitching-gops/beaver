@@ -1,0 +1,7 @@
+# Desktop-only dependencies for make_sentinel2_mbtiles.py. Not part of the Android build.
+# Pinned to the versions the script was last run and verified with; all ship Windows wheels on
+# PyPI (rasterio's wheel bundles GDAL/PROJ, so no separate GDAL install is needed).
+rasterio==1.5.1
+pystac-client==0.9.0
+numpy==2.5.3
+pillow==12.3.0
