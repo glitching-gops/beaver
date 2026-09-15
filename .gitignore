@@ -93,6 +93,10 @@ lint-results*.xml
 # .claude/settings.json (if one is ever added) is the file meant to be committed.
 .claude/settings.local.json
 
+# graphify knowledge graph. Derived and rebuildable (`graphify update .`), several MB, and some of
+# its files record absolute local paths, so it stays on the machine that built it.
+graphify-out/
+
 ### ---------------------------------------------------------------------------------------------
 ### Field data
 ### ---------------------------------------------------------------------------------------------
