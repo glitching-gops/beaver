@@ -82,6 +82,18 @@ fun generateCanopyPolygon(
  */
 fun canopySeedFor(timestampMillis: Long): Long = timestampMillis
 
+/**
+ * The shape seed for tree [treeNumber] of a cluster captured at [timestampMillis].
+ *
+ * The centre tree (number 1) keeps exactly [canopySeedFor], so every capture saved before clusters
+ * existed regenerates the same silhouette it always did. Members mix their number in with a large
+ * odd constant (the 64-bit golden ratio), so neighbours in one photo don't share a crown shape and
+ * a member's shape is still reproducible from what is stored.
+ */
+fun clusterTreeSeedFor(timestampMillis: Long, treeNumber: Int): Long =
+    if (treeNumber <= 1) canopySeedFor(timestampMillis)
+    else canopySeedFor(timestampMillis) xor (treeNumber.toLong() * -0x61c8864680b583ebL)
+
 /** Formats a canopy diameter for the operator, rounded to the precision the method can support. */
 fun formatCanopyDiameter(diameterMeters: Double): String =
     if (diameterMeters >= 10.0) {

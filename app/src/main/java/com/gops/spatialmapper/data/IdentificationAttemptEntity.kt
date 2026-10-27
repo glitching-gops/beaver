@@ -50,5 +50,9 @@ data class IdentificationAttemptEntity(
     val timestampMillis: Long,
     val photoPath: String,
     val candidatesJson: String,
-    val confirmedScientificName: String? = null
+    val confirmedScientificName: String? = null,
+    // v8: which tree of a cluster this attempt identified ON ITS OWN (ClusterMemberEntity.memberIndex).
+    // Null means the attempt was for the capture as a whole — the centre tree, inherited by any
+    // members without a species of their own — which is also what every pre-v8 attempt was.
+    val memberIndex: Int? = null
 )

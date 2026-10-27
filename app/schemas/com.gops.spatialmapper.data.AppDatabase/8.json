@@ -1,0 +1,584 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "951938f168d4f042f28b6fdd9c8f2b9e",
+    "entities": [
+      {
+        "tableName": "sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestampMillis` INTEGER NOT NULL, `photoPath` TEXT NOT NULL, `latitude` REAL, `longitude` REAL, `gpsAccuracyMeters` REAL, `headingDegrees` REAL, `headingIsTrueNorth` INTEGER NOT NULL, `pitchDegrees` REAL, `compassReliability` TEXT NOT NULL, `distanceMeters` REAL, `distanceMethod` TEXT, `projectedLatitude` REAL, `projectedLongitude` REAL, `focalLengthPixels` REAL, `imageWidthPixels` INTEGER, `imageHeightPixels` INTEGER, `canopyDiameterMeters` REAL, `canopyDiameterHorizontalMeters` REAL, `canopyDiameterVerticalMeters` REAL, `label` TEXT NOT NULL, `polygonVertices` TEXT NOT NULL, `speciesScientificName` TEXT, `speciesCommonName` TEXT, `speciesGenus` TEXT, `speciesConfidence` REAL, `speciesSource` TEXT, `treeClass` TEXT NOT NULL, `classSource` TEXT NOT NULL, `classConfirmedAtMillis` INTEGER, `classLookupVersion` TEXT, `areaSquareMeters` REAL, `depthImagePath` TEXT, `depthImageWidth` INTEGER, `depthImageHeight` INTEGER, `depthRotationDegrees` INTEGER, `depthTransform` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoPath",
+            "columnName": "photoPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "gpsAccuracyMeters",
+            "columnName": "gpsAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingDegrees",
+            "columnName": "headingDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "headingIsTrueNorth",
+            "columnName": "headingIsTrueNorth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pitchDegrees",
+            "columnName": "pitchDegrees",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "compassReliability",
+            "columnName": "compassReliability",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "distanceMethod",
+            "columnName": "distanceMethod",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "projectedLatitude",
+            "columnName": "projectedLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "projectedLongitude",
+            "columnName": "projectedLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "focalLengthPixels",
+            "columnName": "focalLengthPixels",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "imageWidthPixels",
+            "columnName": "imageWidthPixels",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "imageHeightPixels",
+            "columnName": "imageHeightPixels",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "canopyDiameterMeters",
+            "columnName": "canopyDiameterMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "canopyDiameterHorizontalMeters",
+            "columnName": "canopyDiameterHorizontalMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "canopyDiameterVerticalMeters",
+            "columnName": "canopyDiameterVerticalMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "polygonVertices",
+            "columnName": "polygonVertices",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speciesScientificName",
+            "columnName": "speciesScientificName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesCommonName",
+            "columnName": "speciesCommonName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesGenus",
+            "columnName": "speciesGenus",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesConfidence",
+            "columnName": "speciesConfidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speciesSource",
+            "columnName": "speciesSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "treeClass",
+            "columnName": "treeClass",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classSource",
+            "columnName": "classSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classConfirmedAtMillis",
+            "columnName": "classConfirmedAtMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "classLookupVersion",
+            "columnName": "classLookupVersion",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "areaSquareMeters",
+            "columnName": "areaSquareMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "depthImagePath",
+            "columnName": "depthImagePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "depthImageWidth",
+            "columnName": "depthImageWidth",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthImageHeight",
+            "columnName": "depthImageHeight",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthRotationDegrees",
+            "columnName": "depthRotationDegrees",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "depthTransform",
+            "columnName": "depthTransform",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "identification_attempts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `timestampMillis` INTEGER NOT NULL, `photoPath` TEXT NOT NULL, `candidatesJson` TEXT NOT NULL, `confirmedScientificName` TEXT, `memberIndex` INTEGER, FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestampMillis",
+            "columnName": "timestampMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "photoPath",
+            "columnName": "photoPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "candidatesJson",
+            "columnName": "candidatesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmedScientificName",
+            "columnName": "confirmedScientificName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "memberIndex",
+            "columnName": "memberIndex",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_identification_attempts_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_identification_attempts_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "removed_trees",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `officerLatitude` REAL, `officerLongitude` REAL, `officerAccuracyMeters` REAL, `proximityMeters` REAL, `markedAtMillis` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "officerLatitude",
+            "columnName": "officerLatitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "officerLongitude",
+            "columnName": "officerLongitude",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "officerAccuracyMeters",
+            "columnName": "officerAccuracyMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "proximityMeters",
+            "columnName": "proximityMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "markedAtMillis",
+            "columnName": "markedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "survey_tracks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `label` TEXT NOT NULL, `startedAtMillis` INTEGER NOT NULL, `endedAtMillis` INTEGER, `pointCount` INTEGER NOT NULL, `points` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtMillis",
+            "columnName": "startedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAtMillis",
+            "columnName": "endedAtMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "pointCount",
+            "columnName": "pointCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "points",
+            "columnName": "points",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "cluster_members",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` INTEGER NOT NULL, `memberIndex` INTEGER NOT NULL, `ellipseCenterXPixels` REAL NOT NULL, `ellipseCenterYPixels` REAL NOT NULL, `ellipseRadiusXPixels` REAL NOT NULL, `ellipseRadiusYPixels` REAL NOT NULL, `distanceMeters` REAL NOT NULL, `distanceMethod` TEXT NOT NULL, `bearingDegrees` REAL NOT NULL, `canopyDiameterHorizontalMeters` REAL NOT NULL, `canopyDiameterVerticalMeters` REAL NOT NULL, `canopyDiameterMeters` REAL NOT NULL, `projectedLatitude` REAL NOT NULL, `projectedLongitude` REAL NOT NULL, `polygonVertices` TEXT NOT NULL, `areaSquareMeters` REAL, `treeClass` TEXT NOT NULL, `classSource` TEXT NOT NULL, `classConfirmedAtMillis` INTEGER, `speciesScientificName` TEXT, `speciesCommonName` TEXT, `speciesGenus` TEXT, `speciesConfidence` REAL, `speciesSource` TEXT, `speciesInherited` INTEGER NOT NULL, FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberIndex",
+            "columnName": "memberIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ellipseCenterXPixels",
+            "columnName": "ellipseCenterXPixels",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ellipseCenterYPixels",
+            "columnName": "ellipseCenterYPixels",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ellipseRadiusXPixels",
+            "columnName": "ellipseRadiusXPixels",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ellipseRadiusYPixels",
+            "columnName": "ellipseRadiusYPixels",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMethod",
+            "columnName": "distanceMethod",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bearingDegrees",
+            "columnName": "bearingDegrees",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canopyDiameterHorizontalMeters",
+            "columnName": "canopyDiameterHorizontalMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canopyDiameterVerticalMeters",
+            "columnName": "canopyDiameterVerticalMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canopyDiameterMeters",
+            "columnName": "canopyDiameterMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectedLatitude",
+            "columnName": "projectedLatitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "projectedLongitude",
+            "columnName": "projectedLongitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "polygonVertices",
+            "columnName": "polygonVertices",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "areaSquareMeters",
+            "columnName": "areaSquareMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "treeClass",
+            "columnName": "treeClass",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classSource",
+            "columnName": "classSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classConfirmedAtMillis",
+            "columnName": "classConfirmedAtMillis",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "speciesScientificName",
+            "columnName": "speciesScientificName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesCommonName",
+            "columnName": "speciesCommonName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesGenus",
+            "columnName": "speciesGenus",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesConfidence",
+            "columnName": "speciesConfidence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speciesSource",
+            "columnName": "speciesSource",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "speciesInherited",
+            "columnName": "speciesInherited",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_cluster_members_sessionId_memberIndex",
+            "unique": true,
+            "columnNames": [
+              "sessionId",
+              "memberIndex"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_cluster_members_sessionId_memberIndex` ON `${TABLE_NAME}` (`sessionId`, `memberIndex`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sessions",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '951938f168d4f042f28b6fdd9c8f2b9e')"
+    ]
+  }
+}

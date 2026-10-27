@@ -53,11 +53,14 @@ import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberUpdatedMarkerState
+import com.gops.spatialmapper.data.ClusterMemberEntity
 import com.gops.spatialmapper.data.RemovedTreeEntity
 import com.gops.spatialmapper.data.RemovedTreeRepository
 import com.gops.spatialmapper.data.SessionEntity
 import com.gops.spatialmapper.data.SessionRepository
 import com.gops.spatialmapper.data.SurveyTrackRepository
+import com.gops.spatialmapper.data.TreeClass
+import com.gops.spatialmapper.data.parseTreeClass
 import com.gops.spatialmapper.survey.formatSurveyDuration
 import com.gops.spatialmapper.removed.buildRemovedTree
 import com.gops.spatialmapper.removed.resolveOfficerFix
@@ -71,6 +74,9 @@ private const val TAG = "SpatialMapperGlobalMap"
 
 /** Zoom used when the map opens focused on ONE tree; matches the individual map review screen. */
 private const val FOCUSED_ZOOM = 19.5f
+
+/** Zoom for "View on map" on a cluster: a step out, so its neighbours are on screen too. */
+private const val FOCUSED_CLUSTER_ZOOM = 18.5f
 
 /** Fallback zoom if the auto-fit bounds move is rejected (see the runCatching below). */
 private const val FALLBACK_ZOOM = 17f
@@ -94,16 +100,24 @@ private const val SCOUT_FOLLOW_ZOOM = 18.5f
 private const val SCOUT_FOLLOW_ANIMATION_MILLIS = 700
 
 /**
- * One saved session, ready to draw. Built once per session-list change rather than per recomposition
- * — see the `remember(sessions)` in [GlobalMapScreen].
+ * One saved TREE, ready to draw — the centre tree of a session, or one member of its cluster. Built
+ * once per data change rather than per recomposition — see the `remember(sessions, members)` in
+ * [GlobalMapScreen].
  */
 private data class CanopyOverlay(
     val sessionId: Long,
+    /** 1 for the session row's own tree, 2..N for cluster members. */
+    val treeNumber: Int,
     val label: String,
     val vertices: List<LatLng>,
     /** Bounding box of [vertices]; supplies both the focus center and the global auto-fit. */
-    val bounds: LatLngBounds
+    val bounds: LatLngBounds,
+    /** The tree's growth-form classification, for coloring on the map. */
+    val treeClass: TreeClass
 )
+
+/** The outline around one capture's trees; only for captures of more than one tree. */
+private data class ClusterOverlay(val sessionId: Long, val outline: List<LatLng>)
 
 /**
  * Every recorded tree on one satellite view.
@@ -139,11 +153,26 @@ fun GlobalMapScreen(
     // change, NOT on every recomposition (camera moves alone recompose this screen constantly). The
     // Room Flow re-emits an equal list on unrelated writes, and List equality is structural here, so
     // remember() genuinely skips the work rather than just deferring it.
-    val canopies = remember(sessions) { sessions.orEmpty().mapNotNull { it.toCanopyOverlay() } }
-    val allBounds = remember(canopies) { canopies.combinedBounds() }
-    val focused = remember(canopies, focusedSessionId) {
-        focusedSessionId?.let { id -> canopies.firstOrNull { it.sessionId == id } }
+    val members by repository.observeAllMembers().collectAsState(initial = emptyList())
+    val canopies = remember(sessions, members) {
+        val membersBySession = members.groupBy { it.sessionId }
+        sessions.orEmpty().flatMap { session ->
+            listOfNotNull(session.toCanopyOverlay()) +
+                membersBySession[session.id].orEmpty().mapNotNull { it.toCanopyOverlay(session.label, session.timestampMillis) }
+        }
     }
+    val clusters = remember(canopies) {
+        canopies.groupBy { it.sessionId }
+            .filterValues { needsClusterOutline(it.size) }
+            .map { (sessionId, trees) -> ClusterOverlay(sessionId, paddedClusterOutline(trees.map { it.vertices })) }
+    }
+    val allBounds = remember(canopies) { canopies.combinedBounds() }
+    // Every tree of the focused capture: "View on map" on a cluster means the cluster.
+    val focusedTrees = remember(canopies, focusedSessionId) {
+        focusedSessionId?.let { id -> canopies.filter { it.sessionId == id } }.orEmpty()
+    }
+    val focused = focusedTrees.firstOrNull()
+    val focusedBounds = remember(focusedTrees) { focusedTrees.combinedBounds() }
 
     var mapLoaded by remember { mutableStateOf(false) }
     val cameraPositionState = rememberCameraPositionState()
@@ -254,10 +283,13 @@ fun GlobalMapScreen(
         // survey overview, which is the natural "I'm done walking" behaviour.
         if (scout.active) return@LaunchedEffect
 
-        val target = focused
+        val target = focusedBounds
         if (target != null) {
             cameraPositionState.move(
-                CameraUpdateFactory.newLatLngZoom(target.bounds.center, FOCUSED_ZOOM)
+                CameraUpdateFactory.newLatLngZoom(
+                    target.center,
+                    if (focusedTrees.size > 1) FOCUSED_CLUSTER_ZOOM else FOCUSED_ZOOM
+                )
             )
             return@LaunchedEffect
         }
@@ -305,16 +337,27 @@ fun GlobalMapScreen(
             uiSettings = MapUiSettings(mapToolbarEnabled = false),
             onMapLoaded = { mapLoaded = true }
         ) {
+            // Cluster outlines first and lowest (zIndex just under the crowns), so a tap inside a crown
+            // reaches the crown; the dotted ring itself opens the capture too.
+            clusters.forEach { cluster ->
+                ClusterOutlinePolygons(
+                    outline = cluster.outline,
+                    onClick = if (markingMode) null else ({ onOpenSession(cluster.sessionId) })
+                )
+            }
+
             canopies.forEach { canopy ->
                 val isFocused = canopy.sessionId == focusedSessionId
+                val baseClass = canopy.treeClass
                 Polygon(
                     points = canopy.vertices,
-                    fillColor = if (isFocused) CANOPY_HIGHLIGHT_FILL_COLOR else CANOPY_FILL_COLOR,
+                    fillColor = if (isFocused) CANOPY_HIGHLIGHT_FILL_COLOR else canopyFillColor(baseClass),
                     strokeColor = if (isFocused) {
                         CANOPY_HIGHLIGHT_STROKE_COLOR
                     } else {
-                        CANOPY_STROKE_COLOR
+                        canopyStrokeColor(baseClass)
                     },
+                    strokePattern = if (isFocused) null else canopyStrokePattern(baseClass),
                     strokeWidth = if (isFocused) {
                         CANOPY_HIGHLIGHT_STROKE_WIDTH
                     } else {
@@ -326,15 +369,17 @@ fun GlobalMapScreen(
                     clickable = !markingMode,
                     onClick = { onOpenSession(canopy.sessionId) },
                     // Keep the highlighted crown on top so an overlapping neighbour can't hide it.
-                    zIndex = if (isFocused) 2f else 1f
+                    zIndex = if (isFocused) 2f else 1f,
+                    geodesic = false
                 )
             }
 
             // A pin on the focused tree: the heavier amber outline reads well when the canopy fills
             // the screen, but this keeps it findable if the operator pans away and zooms out.
             focused?.let { target ->
+                val pinAt = focusedBounds?.center ?: target.bounds.center
                 Marker(
-                    state = remember(target.sessionId) { MarkerState(position = target.bounds.center) },
+                    state = remember(target.sessionId, pinAt) { MarkerState(position = pinAt) },
                     title = target.label.ifBlank { "(no label)" },
                     snippet = "Tap the canopy to open this session",
                     zIndex = 3f
@@ -423,7 +468,9 @@ fun GlobalMapScreen(
             )
             else -> MapHeader(
                 focusedLabel = focused?.label,
+                // TREES, not sessions: a cluster of four adds four, here and in the legend.
                 treeCount = canopies.size,
+                classCounts = remember(canopies) { canopies.groupingBy { it.treeClass }.eachCount() },
                 onClearFocus = onClearFocus,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
@@ -662,14 +709,18 @@ private fun EmptyMapState(hasSessions: Boolean, modifier: Modifier = Modifier) {
 }
 
 /**
- * Floating header: either the tree count, or which single tree is being focused plus a way out of
- * that focus. Without the escape hatch, arriving via "View on map" would strand the operator zoomed
- * onto one crown with no obvious route back to the whole survey.
+ * Floating header: either the tree count with a per-class legend, or which capture is being focused
+ * plus a way out of that focus. Without the escape hatch, arriving via "View on map" would strand
+ * the operator zoomed onto one crown with no obvious route back to the whole survey.
+ *
+ * Every count is of TREES — the session row's own tree plus each cluster member — because that is
+ * what the colours on the map are.
  */
 @Composable
 private fun MapHeader(
     focusedLabel: String?,
     treeCount: Int,
+    classCounts: Map<TreeClass, Int>,
     onClearFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -683,11 +734,14 @@ private fun MapHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (focusedLabel == null) {
-                Text(
-                    text = if (treeCount == 1) "1 tree" else "$treeCount trees",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Column {
+                    Text(
+                        text = if (treeCount == 1) "1 tree" else "$treeCount trees",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    ClassLegend(classCounts)
+                }
             } else {
                 Text(
                     text = "Showing ${focusedLabel.ifBlank { "(no label)" }}",
@@ -699,6 +753,43 @@ private fun MapHeader(
             }
         }
     }
+}
+
+/**
+ * One dot + count per class that is actually on the map, in the enum's order, so the legend only
+ * ever explains colours the operator can see.
+ */
+@Composable
+private fun ClassLegend(classCounts: Map<TreeClass, Int>) {
+    val shown = TreeClass.entries.filter { (classCounts[it] ?: 0) > 0 }
+    if (shown.isEmpty()) return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        shown.forEach { treeClass ->
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(canopyStrokeColor(treeClass))
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                text = "${legendName(treeClass)} ${classCounts[treeClass]}",
+                fontSize = 11.sp,
+                color = Color.DarkGray
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+    }
+}
+
+private fun legendName(treeClass: TreeClass): String = when (treeClass) {
+    TreeClass.PALM -> "Palm"
+    TreeClass.BROADLEAF_EVERGREEN -> "Evergreen"
+    TreeClass.BROADLEAF_DECIDUOUS -> "Deciduous"
+    TreeClass.BROADLEAF_UNCONFIRMED -> "Broadleaf"
+    TreeClass.BAMBOO -> "Bamboo"
+    TreeClass.OTHER -> "Other"
+    TreeClass.UNCLASSIFIED -> "Unclassified"
 }
 
 /**
@@ -720,9 +811,34 @@ private fun SessionEntity.toCanopyOverlay(): CanopyOverlay? {
     vertices.forEach(builder::include)
     return CanopyOverlay(
         sessionId = id,
+        treeNumber = 1,
         label = label,
         vertices = vertices,
-        bounds = builder.build()
+        bounds = builder.build(),
+        treeClass = parseTreeClass(treeClass)
+    )
+}
+
+/**
+ * A cluster member, drawable. Same source-of-truth rule as the session row: the confirmed outline,
+ * regenerated from the stored projection and diameter with the member's own seed only if the stored
+ * outline is unusable.
+ */
+private fun ClusterMemberEntity.toCanopyOverlay(sessionLabel: String, sessionTimestampMillis: Long): CanopyOverlay? {
+    val vertices = polygonVertices.takeIf { it.size >= 3 } ?: generateCanopyPolygon(
+        center = LatLng(projectedLatitude, projectedLongitude),
+        baseRadiusMeters = (canopyDiameterMeters / 2.0).coerceIn(MIN_CANOPY_RADIUS_METERS, MAX_CANOPY_RADIUS_METERS),
+        seed = clusterTreeSeedFor(sessionTimestampMillis, memberIndex)
+    )
+    val builder = LatLngBounds.builder()
+    vertices.forEach(builder::include)
+    return CanopyOverlay(
+        sessionId = sessionId,
+        treeNumber = memberIndex,
+        label = sessionLabel,
+        vertices = vertices,
+        bounds = builder.build(),
+        treeClass = parseTreeClass(treeClass)
     )
 }
 

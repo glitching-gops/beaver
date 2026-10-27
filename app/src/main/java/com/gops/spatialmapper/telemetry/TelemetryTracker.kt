@@ -48,7 +48,13 @@ enum class DistanceMethod {
     /** Metric depth from the ARCore Depth API at the center pixel. */
     ARCORE_DEPTH,
     /** Ground-plane geometry estimate from camera height + device pitch (see DistanceEstimation). */
-    GEOMETRY_FALLBACK
+    GEOMETRY_FALLBACK,
+    /**
+     * A cluster member's distance: the median of the valid values in a small window of the depth
+     * image saved at shutter time, around that tree's ellipse centre (see ClusterFraming). Never
+     * used for the centre tree, whose reading is still the live centre pixel ([ARCORE_DEPTH]).
+     */
+    ARCORE_DEPTH_IMAGE
 }
 
 /**

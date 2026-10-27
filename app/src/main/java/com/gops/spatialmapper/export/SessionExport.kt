@@ -1,6 +1,7 @@
 package com.gops.spatialmapper.export
 
 import com.google.android.gms.maps.model.LatLng
+import com.gops.spatialmapper.data.ClusterMemberEntity
 import com.gops.spatialmapper.data.RemovedTreeEntity
 import com.gops.spatialmapper.data.SessionEntity
 import com.gops.spatialmapper.data.SurveyTrackEntity
@@ -17,8 +18,29 @@ import java.time.Instant
  * off-device. Writing the strings to a user-picked location is [SessionExportWriter]'s job.
  */
 
+/**
+ * One exported TREE: a session's own (centre) tree when [member] is null, otherwise one member of
+ * its cluster. Capture-level facts (photo, origin, heading, pitch, camera model, timestamp, label)
+ * always come from [session]; per-tree facts come from [member] when there is one.
+ */
+private class TreeRow(
+    val session: SessionEntity,
+    val member: ClusterMemberEntity?,
+    val clusterSize: Int
+) {
+    val vertices: List<LatLng> get() = perTree({ it.polygonVertices }, { it.polygonVertices })
+
+    /**
+     * The member's value for a member row, the session's for a centre row — never a fallback from
+     * one to the other. A member with no species must export no species, not its cluster's centre
+     * tree's.
+     */
+    fun <T> perTree(ofMember: (ClusterMemberEntity) -> T, ofSession: (SessionEntity) -> T): T =
+        if (member != null) ofMember(member) else ofSession(session)
+}
+
 /** One exported attribute. Defined once so the GeoJSON properties and the CSV columns cannot drift. */
-private class ExportField(val name: String, val value: (SessionEntity) -> Any?)
+private class ExportField(val name: String, val value: (TreeRow) -> Any?)
 
 /**
  * The audit record, in the order it is written to both formats: identity, then what the human
@@ -34,49 +56,67 @@ private class ExportField(val name: String, val value: (SessionEntity) -> Any?)
  * 10,000; two columns that can disagree are a liability in an audit record.
  */
 private val EXPORT_FIELDS: List<ExportField> = listOf(
-    // Present on every record of both kinds, so record type is never inferred from column presence.
-    ExportField("record_type") { RECORD_TYPE_SESSION },
-    ExportField("session_id") { it.id },
-    ExportField("label") { it.label.ifBlank { null } },
-    ExportField("timestamp_millis") { it.timestampMillis },
-    ExportField("timestamp_utc") { Instant.ofEpochMilli(it.timestampMillis).toString() },
+    // Present on every record of every kind, so record type is never inferred from column presence.
+    ExportField("record_type") { if (it.member == null) RECORD_TYPE_SESSION else RECORD_TYPE_CLUSTER_MEMBER },
+    // The capture this tree belongs to — for a member, its cluster's session. Every tree of one
+    // cluster shares it, which is what groups them.
+    ExportField("session_id") { it.session.id },
+    // The tree's number within its capture: 1 for the session's own (centre) tree, 2..N for members.
+    ExportField("member_index") { it.member?.memberIndex ?: 1 },
+    ExportField("cluster_size") { it.clusterSize },
+    ExportField("label") { it.session.label.ifBlank { null } },
+    ExportField("timestamp_millis") { it.session.timestampMillis },
+    ExportField("timestamp_utc") { Instant.ofEpochMilli(it.session.timestampMillis).toString() },
 
     // --- Human-confirmed / derived ---
-    ExportField("area_square_meters") { it.areaSquareMeters },
-    ExportField("polygon_vertex_count") { it.polygonVertices.size },
+    ExportField("area_square_meters") { it.perTree({ m -> m.areaSquareMeters }, { s -> s.areaSquareMeters }) },
+    ExportField("polygon_vertex_count") { it.vertices.size },
 
     // --- Species (the current answer; the per-attempt trail is not part of this export) ---
-    ExportField("species_scientific_name") { it.speciesScientificName },
-    ExportField("species_common_name") { it.speciesCommonName },
-    ExportField("species_genus") { it.speciesGenus },
-    ExportField("species_confidence") { it.speciesConfidence },
-    ExportField("species_source") { it.speciesSource },
+    ExportField("species_scientific_name") { it.perTree({ m -> m.speciesScientificName }, { s -> s.speciesScientificName }) },
+    ExportField("species_common_name") { it.perTree({ m -> m.speciesCommonName }, { s -> s.speciesCommonName }) },
+    ExportField("species_genus") { it.perTree({ m -> m.speciesGenus }, { s -> s.speciesGenus }) },
+    ExportField("species_confidence") { it.perTree({ m -> m.speciesConfidence }, { s -> s.speciesConfidence }) },
+    ExportField("species_source") { it.perTree({ m -> m.speciesSource }, { s -> s.speciesSource }) },
+    // True only for a member whose species was copied from its cluster's identification as a
+    // suggestion; a tree identified on its own (and every centre tree) is false.
+    ExportField("species_inherited") { it.member?.speciesInherited ?: false },
+
+    // --- Tree classification (manual growth form) ---
+    ExportField("tree_class") { it.perTree({ m -> m.treeClass }, { s -> s.treeClass }) },
+    ExportField("class_source") { it.perTree({ m -> m.classSource }, { s -> s.classSource }) },
+    ExportField("class_confirmed_at_millis") { it.perTree({ m -> m.classConfirmedAtMillis }, { s -> s.classConfirmedAtMillis }) },
 
     // --- Canopy measurement ---
-    ExportField("canopy_diameter_mean_m") { it.canopyDiameterMeters },
-    ExportField("canopy_diameter_horizontal_m") { it.canopyDiameterHorizontalMeters },
-    ExportField("canopy_diameter_vertical_m") { it.canopyDiameterVerticalMeters },
+    ExportField("canopy_diameter_mean_m") { it.perTree({ m -> m.canopyDiameterMeters }, { s -> s.canopyDiameterMeters }) },
+    ExportField("canopy_diameter_horizontal_m") { it.perTree({ m -> m.canopyDiameterHorizontalMeters }, { s -> s.canopyDiameterHorizontalMeters }) },
+    ExportField("canopy_diameter_vertical_m") { it.perTree({ m -> m.canopyDiameterVerticalMeters }, { s -> s.canopyDiameterVerticalMeters }) },
 
-    // --- Raw telemetry ---
-    ExportField("origin_latitude") { it.latitude },
-    ExportField("origin_longitude") { it.longitude },
-    ExportField("gps_accuracy_meters") { it.gpsAccuracyMeters },
-    ExportField("heading_degrees") { it.headingDegrees },
-    ExportField("heading_reference") { if (it.headingIsTrueNorth) "true_north" else "magnetic" },
-    ExportField("pitch_degrees") { it.pitchDegrees },
-    ExportField("compass_reliability") { it.compassReliability },
-    ExportField("distance_meters") { it.distanceMeters },
-    ExportField("distance_method") { it.distanceMethod },
-    ExportField("projected_latitude") { it.projectedLatitude },
-    ExportField("projected_longitude") { it.projectedLongitude },
+    // --- Raw telemetry (capture-level, shared by every tree of the capture) ---
+    ExportField("origin_latitude") { it.session.latitude },
+    ExportField("origin_longitude") { it.session.longitude },
+    ExportField("gps_accuracy_meters") { it.session.gpsAccuracyMeters },
+    ExportField("heading_degrees") { it.session.headingDegrees },
+    ExportField("heading_reference") { if (it.session.headingIsTrueNorth) "true_north" else "magnetic" },
+    ExportField("pitch_degrees") { it.session.pitchDegrees },
+    ExportField("compass_reliability") { it.session.compassReliability },
+
+    // --- This tree's own distance, direction and projected position ---
+    ExportField("distance_meters") { it.perTree({ m -> m.distanceMeters }, { s -> s.distanceMeters }) },
+    ExportField("distance_method") { it.perTree({ m -> m.distanceMethod }, { s -> s.distanceMethod }) },
+    // The compass bearing from the origin to THIS tree: the capture heading for the centre tree,
+    // heading + atan(dx / f) for a member.
+    ExportField("bearing_degrees") { it.perTree({ m -> m.bearingDegrees }, { s -> s.headingDegrees }) },
+    ExportField("projected_latitude") { it.perTree({ m -> m.projectedLatitude }, { s -> s.projectedLatitude }) },
+    ExportField("projected_longitude") { it.perTree({ m -> m.projectedLongitude }, { s -> s.projectedLongitude }) },
 
     // --- Camera model ---
-    ExportField("focal_length_pixels") { it.focalLengthPixels },
-    ExportField("image_width_pixels") { it.imageWidthPixels },
-    ExportField("image_height_pixels") { it.imageHeightPixels },
+    ExportField("focal_length_pixels") { it.session.focalLengthPixels },
+    ExportField("image_width_pixels") { it.session.imageWidthPixels },
+    ExportField("image_height_pixels") { it.session.imageHeightPixels },
 
     // --- Provenance ---
-    ExportField("photo_path") { it.photoPath }
+    ExportField("photo_path") { it.session.photoPath }
 )
 
 /**
@@ -169,13 +209,28 @@ fun removedTreesToCsv(removedTrees: List<RemovedTreeEntity>): String {
  * present — a rule that would break the moment either schema gains a column.
  */
 const val RECORD_TYPE_SESSION = "session"
+/** An extra tree of a cluster. Its session_id is the capture it was recorded in. */
+const val RECORD_TYPE_CLUSTER_MEMBER = "cluster_member"
 const val RECORD_TYPE_REMOVED_TREE = "removed_tree"
 const val RECORD_TYPE_SURVEY_TRACK = "survey_track"
 
 /**
- * A GeoJSON FeatureCollection (RFC 7946) holding all three record types: one Polygon Feature per
- * captured session, one Point Feature per removed tree, and one LineString Feature per recorded
- * survey track.
+ * Every tree, in export order: each session's own tree followed by its cluster members by number.
+ * A session with no members is a cluster of one, exactly as it was before clusters existed.
+ */
+private fun treeRows(sessions: List<SessionEntity>, members: List<ClusterMemberEntity>): List<TreeRow> {
+    val bySession = members.groupBy { it.sessionId }
+    return sessions.flatMap { session ->
+        val own = bySession[session.id].orEmpty().sortedBy { it.memberIndex }
+        val size = 1 + own.size
+        listOf(TreeRow(session, null, size)) + own.map { TreeRow(session, it, size) }
+    }
+}
+
+/**
+ * A GeoJSON FeatureCollection (RFC 7946) holding every record type: one Polygon Feature per TREE —
+ * a session's own tree and each of its cluster [members] — one Point Feature per removed tree, and
+ * one LineString Feature per recorded survey track.
  *
  * MIXED GEOMETRY IS VALID: RFC 7946 section 3.3 puts no constraint on the geometry types within a
  * FeatureCollection, and every mainstream consumer (QGIS, PostGIS via ogr2ogr, geojson.io, Leaflet)
@@ -196,20 +251,24 @@ const val RECORD_TYPE_SURVEY_TRACK = "survey_track"
 fun sessionsToGeoJson(
     sessions: List<SessionEntity>,
     removedTrees: List<RemovedTreeEntity> = emptyList(),
-    surveyTracks: List<SurveyTrackEntity> = emptyList()
+    surveyTracks: List<SurveyTrackEntity> = emptyList(),
+    members: List<ClusterMemberEntity> = emptyList()
 ): String {
     val features = JSONArray()
-    sessions.forEach { session ->
+    val trees = treeRows(sessions, members)
+    trees.forEach { tree ->
         val feature = JSONObject()
         feature.put("type", "Feature")
         // Feature-level id (section 3.2) as well as a session_id property: some consumers surface
         // one, some the other, and neither survives every conversion tool.
         //
-        // PREFIXED, because ids must be unique across the collection and the two tables both
-        // autoincrement from 1 — raw ids would collide on the very first record of each.
-        feature.put("id", "session-${session.id}")
-        feature.put("geometry", polygonGeometry(session.polygonVertices) ?: JSONObject.NULL)
-        feature.put("properties", propertiesOf(session))
+        // PREFIXED, because ids must be unique across the collection and the tables all
+        // autoincrement from 1 — raw ids would collide on the very first record of each. A member
+        // is "member-<session>-<tree number>": its own prefix, so it can never equal a
+        // "session-", "removed-" or "survey-" id, and stable, since tree numbers never change.
+        feature.put("id", featureIdOf(tree))
+        feature.put("geometry", polygonGeometry(tree.vertices) ?: JSONObject.NULL)
+        feature.put("properties", propertiesOf(tree))
         features.put(feature)
     }
     removedTrees.forEach { removedTree ->
@@ -236,6 +295,7 @@ fun sessionsToGeoJson(
         put("name", "spatialmapper_survey")
         put("generated_utc", Instant.now().toString())
         put("session_count", sessions.size)
+        put("tree_count", trees.size)
         put("removed_tree_count", removedTrees.size)
         put("survey_track_count", surveyTracks.size)
         put("features", features)
@@ -357,12 +417,15 @@ private fun isCounterClockwise(vertices: List<LatLng>): Boolean {
 private fun position(vertex: LatLng): JSONArray =
     JSONArray().put(vertex.longitude).put(vertex.latitude)
 
-private fun propertiesOf(session: SessionEntity): JSONObject {
+private fun featureIdOf(tree: TreeRow): String =
+    tree.member?.let { "member-${tree.session.id}-${it.memberIndex}" } ?: "session-${tree.session.id}"
+
+private fun propertiesOf(tree: TreeRow): JSONObject {
     val properties = JSONObject()
     EXPORT_FIELDS.forEach { field ->
         // JSONObject.put(key, null) REMOVES the key. An absent property and a null one are different
         // things to a consumer diffing records, so nulls are written explicitly as JSON null.
-        properties.put(field.name, jsonValueOf(field.value(session)))
+        properties.put(field.name, jsonValueOf(field.value(tree)))
     }
     return properties
 }
@@ -383,8 +446,9 @@ private fun jsonValueOf(value: Any?): Any = when (value) {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * RFC 4180 CSV: a header row, then one row per session, with columns matching the GeoJSON properties
- * exactly plus [CSV_GEOMETRY_COLUMN].
+ * RFC 4180 CSV: a header row, then one row per TREE — each session's own tree followed by its
+ * cluster [members] — with columns matching the GeoJSON properties exactly plus
+ * [CSV_GEOMETRY_COLUMN].
  *
  * Encoding is plain UTF-8 with NO byte-order mark. A BOM would make Excel open a non-ASCII label
  * correctly on a double-click, but it also leaks a stray U+FEFF into the first column name for
@@ -394,14 +458,17 @@ private fun jsonValueOf(value: Any?): Any = when (value) {
  *
  * Line terminator is CRLF, as RFC 4180 specifies.
  */
-fun sessionsToCsv(sessions: List<SessionEntity>): String {
+fun sessionsToCsv(
+    sessions: List<SessionEntity>,
+    members: List<ClusterMemberEntity> = emptyList()
+): String {
     val builder = StringBuilder()
     val headers = EXPORT_FIELDS.map { it.name } + CSV_GEOMETRY_COLUMN
     builder.append(headers.joinToString(",") { csvField(it) }).append(CSV_LINE_TERMINATOR)
 
-    sessions.forEach { session ->
-        val cells = EXPORT_FIELDS.map { csvValueOf(it.value(session)) } +
-            session.polygonVertices.joinToString(";") { "${it.latitude},${it.longitude}" }
+    treeRows(sessions, members).forEach { tree ->
+        val cells = EXPORT_FIELDS.map { csvValueOf(it.value(tree)) } +
+            tree.vertices.joinToString(";") { "${it.latitude},${it.longitude}" }
         builder.append(cells.joinToString(",") { csvField(it) }).append(CSV_LINE_TERMINATOR)
     }
     return builder.toString()

@@ -17,9 +17,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.collectAsState
+import com.gops.spatialmapper.data.ClusterMemberEntity
 import com.gops.spatialmapper.data.RemovedTreeEntity
 import com.gops.spatialmapper.data.RemovedTreeRepository
 import com.gops.spatialmapper.data.SessionEntity
+import com.gops.spatialmapper.data.SessionRepository
 import com.gops.spatialmapper.data.SurveyTrackEntity
 import com.gops.spatialmapper.data.SurveyTrackRepository
 import kotlinx.coroutines.launch
@@ -37,6 +39,8 @@ private data class ExportRun(
     val sessions: List<SessionEntity>,
     val removedTrees: List<RemovedTreeEntity>,
     val surveyTracks: List<SurveyTrackEntity>,
+    /** Cluster members of [sessions]: each one is a tree of its own in both files. */
+    val members: List<ClusterMemberEntity>,
     val startedAtMillis: Long,
     val geoJsonBytes: Int = 0,
     val sessionCsvBytes: Int = 0
@@ -82,6 +86,11 @@ fun ExportAllAction(sessions: List<SessionEntity>, modifier: Modifier = Modifier
     // into HistoryScreen would add a parameter it has no other use for.
     val removedTreeRepository = remember { RemovedTreeRepository.get(context) }
     val removedTrees by removedTreeRepository.observeRemovedTrees().collectAsState(initial = emptyList())
+
+    // Cluster members, for the same reason: the History list shows one row per capture, but the
+    // export writes one feature and one CSV row per TREE.
+    val sessionRepository = remember { SessionRepository.get(context) }
+    val members by sessionRepository.observeAllMembers().collectAsState(initial = emptyList())
 
     // Survey tracks likewise: the History tab lists them in its other section, but the export runs
     // from the Trees section's top bar, so there is no on-screen list here for it to agree with.
@@ -168,7 +177,7 @@ fun ExportAllAction(sessions: List<SessionEntity>, modifier: Modifier = Modifier
         }
         busy = true
         scope.launch {
-            val result = writeTextDocument(context, uri, sessionsToCsv(current.sessions))
+            val result = writeTextDocument(context, uri, sessionsToCsv(current.sessions, current.members))
             busy = false
             result.fold(
                 onSuccess = { bytes ->
@@ -218,7 +227,7 @@ fun ExportAllAction(sessions: List<SessionEntity>, modifier: Modifier = Modifier
             val result = writeTextDocument(
                 context,
                 uri,
-                sessionsToGeoJson(current.sessions, current.removedTrees, current.surveyTracks)
+                sessionsToGeoJson(current.sessions, current.removedTrees, current.surveyTracks, current.members)
             )
             busy = false
             result.fold(
@@ -247,6 +256,8 @@ fun ExportAllAction(sessions: List<SessionEntity>, modifier: Modifier = Modifier
                     sessions = sessions.toList(),
                     removedTrees = removedTrees.toList(),
                     surveyTracks = surveyTracks.toList(),
+                    // Only the members of the sessions being exported, so the two can't disagree.
+                    members = sessions.map { it.id }.toSet().let { ids -> members.filter { it.sessionId in ids } },
                     startedAtMillis = System.currentTimeMillis()
                 )
                 dialog = ExportDialog.Confirm

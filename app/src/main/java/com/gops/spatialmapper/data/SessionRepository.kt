@@ -2,6 +2,7 @@ package com.gops.spatialmapper.data
 
 import android.content.Context
 import android.util.Log
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -9,12 +10,15 @@ import com.gops.spatialmapper.area.polygonAreaSquareMeters
 import java.io.File
 
 /**
- * Thin repository over [SessionDao]. Exists mainly to own the one piece of logic that isn't a plain
- * DB call: cleaning up the on-disk JPEG when a session is deleted.
+ * Thin repository over [SessionDao]. Exists mainly to own the logic that isn't a plain DB call:
+ * cleaning up the on-disk files when a session is deleted, and the multi-table writes a cluster
+ * needs (a capture and its members saved together; a species applied to a cluster).
  */
 class SessionRepository private constructor(
+    private val database: AppDatabase,
     private val dao: SessionDao,
-    private val attemptDao: IdentificationAttemptDao
+    private val attemptDao: IdentificationAttemptDao,
+    private val memberDao: ClusterMemberDao
 ) {
 
     fun observeSessions(): Flow<List<SessionEntity>> = dao.getAllSessions()
@@ -24,6 +28,31 @@ class SessionRepository private constructor(
     suspend fun insert(session: SessionEntity): Long = dao.insert(session)
 
     suspend fun getById(id: Long): SessionEntity? = dao.getSessionById(id)
+
+    // --- Clusters ---
+
+    /** Every member of every session; the maps group them by [ClusterMemberEntity.sessionId]. */
+    fun observeAllMembers(): Flow<List<ClusterMemberEntity>> = memberDao.observeAll()
+
+    fun observeMembers(sessionId: Long): Flow<List<ClusterMemberEntity>> =
+        memberDao.observeForSession(sessionId)
+
+    suspend fun getAllMembers(): List<ClusterMemberEntity> = memberDao.getAll()
+
+    /**
+     * Saves one capture: the centre tree as the session row, exactly as a single-tree capture always
+     * was, plus its extra trees as [members] pointing at it.
+     *
+     * One transaction, so a capture is never half-saved — a session whose members failed to write
+     * would silently claim to be a cluster of one. The members' sessionId is filled in here from the
+     * new row's id; whatever the caller put there is ignored.
+     */
+    suspend fun insertCapture(session: SessionEntity, members: List<ClusterMemberEntity>): Long =
+        database.withTransaction {
+            val id = dao.insert(session)
+            if (members.isNotEmpty()) memberDao.insertAll(members.map { it.copy(id = 0, sessionId = id) })
+            id
+        }
 
     // --- Area backfill ---
 
@@ -94,22 +123,66 @@ class SessionRepository private constructor(
         commonName: String?,
         genus: String?,
         confidence: Double?,
-        source: String
+        source: String,
+        memberId: Long? = null
     ) {
         attemptDao.markConfirmed(attemptId, scientificName)
-        dao.updateSpecies(
-            id = sessionId,
-            scientificName = scientificName,
-            commonName = commonName,
-            genus = genus,
-            confidence = confidence,
-            source = source
+        if (memberId != null) {
+            // One tree of a cluster, identified on its own: its OWN value, which clears any inherited
+            // flag. The session row and the other members are deliberately left alone.
+            memberDao.updateOwnSpecies(memberId, scientificName, commonName, genus, confidence, source)
+            return
+        }
+        // The capture as a whole: the centre tree, as always, plus — as a suggestion — every member
+        // without a species of its own. Together, so the cluster never shows the centre identified
+        // and its members not.
+        database.withTransaction {
+            dao.updateSpecies(
+                id = sessionId,
+                scientificName = scientificName,
+                commonName = commonName,
+                genus = genus,
+                confidence = confidence,
+                source = source
+            )
+            memberDao.inheritSpecies(sessionId, scientificName, commonName, genus, confidence, source)
+        }
+    }
+
+    // --- Tree classification (manual growth form) ---
+
+    /**
+     * Writes the operator's chosen tree class (growth form) to the session, along with the source
+     * and confirmation timestamp.
+     *
+     * A targeted UPDATE so that a possibly-stale row read earlier cannot clobber other columns.
+     * If the operator deselects all chips (sets class back to UNCLASSIFIED), this clears the
+     * confirmation timestamp but keeps the source as a record of what happened.
+     */
+    suspend fun updateTreeClass(
+        sessionId: Long,
+        treeClass: TreeClass?,
+        classSource: ClassSource = ClassSource.MANUAL
+    ) {
+        val classValue = (treeClass ?: TreeClass.UNCLASSIFIED).name
+        val source = classSource.name
+        val confirmedAtMillis = if (treeClass != null) System.currentTimeMillis() else null
+        dao.updateTreeClass(sessionId, classValue, source, confirmedAtMillis)
+    }
+
+    /** Same as [updateTreeClass], for one member of a cluster. */
+    suspend fun updateMemberTreeClass(memberId: Long, treeClass: TreeClass?) {
+        memberDao.updateTreeClass(
+            id = memberId,
+            treeClass = (treeClass ?: TreeClass.UNCLASSIFIED).name,
+            classSource = ClassSource.MANUAL.name,
+            classConfirmedAtMillis = if (treeClass != null) System.currentTimeMillis() else null
         )
     }
 
     /**
-     * Deletes the DB row AND every JPEG it owns — the capture photo plus one per identification
-     * attempt.
+     * Deletes the DB row AND every file it owns — the capture photo, the saved depth image (v8+), and
+     * one JPEG per identification attempt. Cluster members go with the row via ON DELETE CASCADE.
      *
      * DECISION: we delete the photo files alongside the row. They live in the app's private external
      * files dir (getExternalFilesDir) — this app is their sole owner and the paths are never shared
@@ -129,7 +202,10 @@ class SessionRepository private constructor(
 
         dao.deleteById(session.id)
 
-        (listOf(session.photoPath) + attemptPhotos).forEach { path -> deleteFileQuietly(path) }
+        // The saved depth image goes with the photo it was captured alongside. Member rows need no
+        // file cleanup of their own: they reference the same photo and depth file as the session.
+        (listOfNotNull(session.photoPath, session.depthImagePath) + attemptPhotos)
+            .forEach { path -> deleteFileQuietly(path) }
         Unit
     }
 
@@ -148,7 +224,12 @@ class SessionRepository private constructor(
 
         fun get(context: Context): SessionRepository {
             val database = AppDatabase.getInstance(context)
-            return SessionRepository(database.sessionDao(), database.identificationAttemptDao())
+            return SessionRepository(
+                database,
+                database.sessionDao(),
+                database.identificationAttemptDao(),
+                database.clusterMemberDao()
+            )
         }
     }
 }

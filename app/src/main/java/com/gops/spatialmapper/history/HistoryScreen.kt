@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import android.widget.Toast
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,14 +70,26 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.gops.spatialmapper.area.formatArea
+import com.gops.spatialmapper.data.ClassSource
+import com.gops.spatialmapper.data.ClusterMemberEntity
 import com.gops.spatialmapper.data.SessionEntity
 import com.gops.spatialmapper.data.SessionRepository
+import com.gops.spatialmapper.data.TreeClass
+import com.gops.spatialmapper.data.parseTreeClass
 import com.gops.spatialmapper.export.ExportAllAction
 import com.gops.spatialmapper.identify.decodeCandidates
 import com.gops.spatialmapper.identify.sessionReferencePoint
 import com.gops.spatialmapper.map.CANOPY_FILL_COLOR
 import com.gops.spatialmapper.map.CANOPY_STROKE_COLOR
+import com.gops.spatialmapper.map.ClusterOutlinePolygons
+import com.gops.spatialmapper.map.canopyFillColor
+import com.gops.spatialmapper.map.canopyStrokeColor
+import com.gops.spatialmapper.map.canopyStrokePattern
+import com.gops.spatialmapper.map.needsClusterOutline
+import com.gops.spatialmapper.map.paddedClusterOutline
+import com.gops.spatialmapper.telemetry.DistanceMethod
 import com.gops.spatialmapper.map.formatCanopyDiameter
+import com.gops.spatialmapper.ui.TreeClassSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,6 +114,7 @@ private val timestampFormat = SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.ge
  * @param onIdentify        open the modal species-identification flow for this session. The origin is
  *                          passed along rather than re-read there, because it is what the proximity
  *                          check compares against and detail already has the row in hand.
+ * @param onIdentifyMember  the same flow for ONE member of a cluster (its row id and tree number).
  */
 /**
  * The two kinds of record the History tab browses.
@@ -121,6 +136,7 @@ fun HistoryScreen(
     onViewOnMap: (Long) -> Unit,
     onViewSurveyOnMap: (Long) -> Unit,
     onIdentify: (sessionId: Long, label: String, origin: LatLng?) -> Unit,
+    onIdentifyMember: (sessionId: Long, label: String, origin: LatLng?, memberId: Long, memberIndex: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // rememberSaveable so switching tabs and coming back does not silently drop the operator from
@@ -144,6 +160,7 @@ fun HistoryScreen(
             onDeleted = { onSelectSession(null) },
             onViewOnMap = { onViewOnMap(selectedSessionId) },
             onIdentify = onIdentify,
+            onIdentifyMember = onIdentifyMember,
             modifier = modifier
         )
     }
@@ -166,6 +183,9 @@ private fun SessionList(
     val repository = remember { SessionRepository.get(context) }
     // Flow → Compose state: emits a fresh list on every insert/delete, so this screen updates live.
     val sessions by repository.observeSessions().collectAsState(initial = emptyList())
+    // Member counts per session, so a cluster's row can say how many trees it holds.
+    val allMembers by repository.observeAllMembers().collectAsState(initial = emptyList())
+    val memberCounts = remember(allMembers) { allMembers.groupingBy { it.sessionId }.eachCount() }
 
     Column(modifier = modifier.fillMaxSize()) {
         // No back arrow: this is a tab root now, and the bottom bar is how you leave it.
@@ -200,7 +220,11 @@ private fun SessionList(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(items = sessions, key = { it.id }) { session ->
-                        SessionRow(session = session, onClick = { onOpen(session.id) })
+                        SessionRow(
+                            session = session,
+                            treeCount = 1 + (memberCounts[session.id] ?: 0),
+                            onClick = { onOpen(session.id) }
+                        )
                     }
                 }
             }
@@ -253,7 +277,7 @@ private fun SectionSelector(selected: HistorySection, onSelect: (HistorySection)
 }
 
 @Composable
-private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
+private fun SessionRow(session: SessionEntity, treeCount: Int, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -285,10 +309,18 @@ private fun SessionRow(session: SessionEntity, onClick: () -> Unit) {
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(CANOPY_STROKE_COLOR)
+                            .background(canopyStrokeColor(parseTreeClass(session.treeClass)))
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(text = "Canopy ${canopyText(session.canopyDiameterMeters)}", fontSize = 13.sp)
+                    Text(
+                        text = if (treeCount > 1) {
+                            "Cluster of $treeCount trees"
+                        } else {
+                            "Canopy ${canopyText(session.canopyDiameterMeters)}"
+                        },
+                        fontSize = 13.sp,
+                        fontWeight = if (treeCount > 1) FontWeight.SemiBold else FontWeight.Normal
+                    )
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -313,11 +345,14 @@ private fun SessionDetail(
     onDeleted: () -> Unit,
     onViewOnMap: () -> Unit,
     onIdentify: (sessionId: Long, label: String, origin: LatLng?) -> Unit,
+    onIdentifyMember: (sessionId: Long, label: String, origin: LatLng?, memberId: Long, memberIndex: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val repository = remember { SessionRepository.get(context) }
     val scope = rememberCoroutineScope()
+    // The extra trees of this capture; empty for a single-tree session.
+    val members by repository.observeMembers(sessionId).collectAsState(initial = emptyList())
 
     // OBSERVED, not loaded once. This used to be a one-shot read, which was fine while a saved row
     // never changed. Confirming a species mutates it from a modal stacked on top of this screen, so a
@@ -359,21 +394,25 @@ private fun SessionDetail(
             // Sits directly under the photo, above everything measured, because for an unidentified
             // plant this is the one outstanding action on the record and it should be the first thing
             // the eye lands on after the image.
-            SectionHeader("Species")
+            val referencePoint = sessionReferencePoint(
+                latitude = current.latitude,
+                longitude = current.longitude,
+                projectedLatitude = current.projectedLatitude,
+                projectedLongitude = current.projectedLongitude
+            )
+            SectionHeader(if (members.isEmpty()) "Species" else "Species (tree 1 and the cluster)")
+            if (members.isNotEmpty()) {
+                Text(
+                    text = "Identifying here sets tree 1 and suggests the same species for every " +
+                        "other tree that has none of its own. Override any tree below.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+            }
             SpeciesSection(
                 session = current,
-                onIdentify = {
-                    onIdentify(
-                        current.id,
-                        current.label,
-                        sessionReferencePoint(
-                            latitude = current.latitude,
-                            longitude = current.longitude,
-                            projectedLatitude = current.projectedLatitude,
-                            projectedLongitude = current.projectedLongitude
-                        )
-                    )
-                }
+                onIdentify = { onIdentify(current.id, current.label, referencePoint) }
             )
 
             Spacer(Modifier.height(12.dp))
@@ -382,14 +421,46 @@ private fun SessionDetail(
 
             Spacer(Modifier.height(16.dp))
 
+            // --- Every tree in this capture (clusters only) ---
+            if (members.isNotEmpty()) {
+                SectionHeader("Trees in this capture (${members.size + 1})")
+                ClusterTreeList(
+                    session = current,
+                    members = members,
+                    onIdentifyMember = { member ->
+                        onIdentifyMember(current.id, current.label, referencePoint, member.id, member.memberIndex)
+                    },
+                    onMemberClass = { member, treeClass ->
+                        repository.updateMemberTreeClass(member.id, treeClass)
+                    }
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+
+            // --- Tree classification (manual growth form) ---
+            SectionHeader(if (members.isEmpty()) "Tree class (growth form)" else "Tree 1 class (growth form)")
+            TreeClassSection(
+                session = current,
+                onUpdate = { treeClass ->
+                    repository.updateTreeClass(current.id, treeClass, ClassSource.MANUAL)
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             // --- Confirmed plant ---
             SectionHeader("Confirmed plant")
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val treeClass = try {
+                    TreeClass.valueOf(current.treeClass)
+                } catch (e: Exception) {
+                    TreeClass.UNCLASSIFIED
+                }
                 Box(
                     modifier = Modifier
                         .size(14.dp)
                         .clip(CircleShape)
-                        .background(CANOPY_STROKE_COLOR)
+                        .background(canopyStrokeColor(treeClass))
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
@@ -405,7 +476,7 @@ private fun SessionDetail(
 
             // --- Confirmed canopy outline on satellite imagery (read-only) ---
             SectionHeader("Confirmed canopy outline")
-            FootprintMap(session = current)
+            FootprintMap(session = current, members = members)
             Spacer(Modifier.height(8.dp))
             if (current.polygonVertices.isEmpty()) {
                 Text("No canopy vertices stored.", fontSize = 13.sp)
@@ -481,7 +552,16 @@ private fun SessionDetail(
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Delete this session?") },
-            text = { Text("This permanently removes the saved session and its photo. This can't be undone.") },
+            text = {
+                Text(
+                    if (members.isEmpty()) {
+                        "This permanently removes the saved session and its photo. This can't be undone."
+                    } else {
+                        "This permanently removes all ${members.size + 1} trees of this capture and " +
+                            "its photo. This can't be undone."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteDialog = false
@@ -570,6 +650,49 @@ private fun SpeciesSection(session: SessionEntity, onIdentify: () -> Unit) {
     OutlinedButton(onClick = onIdentify, modifier = Modifier.fillMaxWidth()) {
         Text("Identify again")
     }
+}
+
+/**
+ * Manual tree classification (growth form) editor.
+ *
+ * Shows the currently selected class and provides a chip row to change it. Wires up the update
+ * to the repository when the operator confirms a selection.
+ */
+@Composable
+private fun TreeClassSection(session: SessionEntity, onUpdate: suspend (TreeClass?) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var editingClass by remember(session.id) {
+        mutableStateOf(try {
+            TreeClass.valueOf(session.treeClass)
+        } catch (e: Exception) {
+            TreeClass.UNCLASSIFIED
+        })
+    }
+
+    Text(
+        text = "Current class: ${editingClass.name.replace("_", " ")}",
+        fontSize = 13.sp,
+        fontStyle = FontStyle.Italic
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "Change tree class (optional):",
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    TreeClassSelector(
+        selectedClass = if (editingClass == TreeClass.UNCLASSIFIED) null else editingClass,
+        onClassSelected = { selected ->
+            editingClass = selected ?: TreeClass.UNCLASSIFIED
+            scope.launch {
+                onUpdate(selected)
+                Toast.makeText(context, "Tree class updated", Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
 }
 
 /**
@@ -674,9 +797,12 @@ private fun IdentificationHistorySection(sessionId: Long) {
     }
 }
 
-/** Small read-only satellite map showing the saved canopy + the raw projected target marker. */
+/**
+ * Small read-only satellite map showing the saved canopy (every tree of a cluster, with its outline)
+ * + the raw projected target marker.
+ */
 @Composable
-private fun FootprintMap(session: SessionEntity) {
+private fun FootprintMap(session: SessionEntity, members: List<ClusterMemberEntity>) {
     val vertices = session.polygonVertices
     val center: LatLng? = when {
         vertices.isNotEmpty() -> LatLng(
@@ -694,7 +820,7 @@ private fun FootprintMap(session: SessionEntity) {
     }
 
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(center, 19.5f)
+        position = CameraPosition.fromLatLngZoom(center, if (members.isEmpty()) 19.5f else 18.5f)
     }
 
     GoogleMap(
@@ -714,12 +840,21 @@ private fun FootprintMap(session: SessionEntity) {
             mapToolbarEnabled = false
         )
     ) {
-        if (vertices.size >= 3) {
+        val crowns = (listOf(vertices to parseTreeClass(session.treeClass)) +
+            members.map { it.polygonVertices to parseTreeClass(it.treeClass) })
+            .filter { it.first.size >= 3 }
+        if (needsClusterOutline(crowns.size)) {
+            ClusterOutlinePolygons(paddedClusterOutline(crowns.map { it.first }))
+        }
+        crowns.forEach { (crown, treeClass) ->
             Polygon(
-                points = vertices,
-                fillColor = CANOPY_FILL_COLOR,
-                strokeColor = CANOPY_STROKE_COLOR,
-                strokeWidth = 4f
+                points = crown,
+                fillColor = canopyFillColor(treeClass),
+                strokeColor = canopyStrokeColor(treeClass),
+                strokePattern = canopyStrokePattern(treeClass),
+                strokeWidth = 4f,
+                geodesic = false,
+                zIndex = 1f
             )
         }
         if (session.projectedLatitude != null && session.projectedLongitude != null) {
@@ -731,6 +866,150 @@ private fun FootprintMap(session: SessionEntity) {
             )
         }
     }
+}
+
+/**
+ * Every tree of a cluster, one card each: class, size, how its distance was obtained, and species —
+ * with an inherited species marked "from cluster" so a suggestion is never mistaken for an
+ * identification of that tree.
+ *
+ * Tree 1 is the session row and is edited in the sections above; its card here is read-only so
+ * the list can be read top to bottom as the whole capture. Members get "Identify this tree" (which
+ * replaces an inherited suggestion with the tree's own species) and their own class chips.
+ */
+@Composable
+private fun ClusterTreeList(
+    session: SessionEntity,
+    members: List<ClusterMemberEntity>,
+    onIdentifyMember: (ClusterMemberEntity) -> Unit,
+    onMemberClass: suspend (ClusterMemberEntity, TreeClass?) -> Unit
+) {
+    TreeCard(
+        number = 1,
+        treeClass = parseTreeClass(session.treeClass),
+        diameterMeters = session.canopyDiameterMeters,
+        areaSquareMeters = session.areaSquareMeters,
+        distanceMeters = session.distanceMeters?.toDouble(),
+        distanceMethod = session.distanceMethod,
+        speciesName = session.speciesScientificName,
+        speciesInherited = false,
+        note = "centre tree — edit above"
+    )
+    val scope = rememberCoroutineScope()
+    members.forEach { member -> key(member.id) {
+        var editingClass by remember(member.id) { mutableStateOf(false) }
+        TreeCard(
+            number = member.memberIndex,
+            treeClass = parseTreeClass(member.treeClass),
+            diameterMeters = member.canopyDiameterMeters,
+            areaSquareMeters = member.areaSquareMeters,
+            distanceMeters = member.distanceMeters,
+            distanceMethod = member.distanceMethod,
+            speciesName = member.speciesScientificName,
+            speciesInherited = member.speciesInherited,
+            note = null
+        ) {
+            Row {
+                TextButton(onClick = { onIdentifyMember(member) }) {
+                    Text(if (member.speciesScientificName == null || member.speciesInherited) "Identify this tree" else "Identify again")
+                }
+                TextButton(onClick = { editingClass = !editingClass }) {
+                    Text(if (editingClass) "Done" else "Change class")
+                }
+            }
+            if (editingClass) {
+                val selected = parseTreeClass(member.treeClass).takeUnless { it == TreeClass.UNCLASSIFIED }
+                TreeClassSelector(
+                    selectedClass = selected,
+                    onClassSelected = { treeClass -> scope.launch { onMemberClass(member, treeClass) } }
+                )
+            }
+        }
+    } }
+}
+
+@Composable
+private fun TreeCard(
+    number: Int,
+    treeClass: TreeClass,
+    diameterMeters: Double?,
+    areaSquareMeters: Double?,
+    distanceMeters: Double?,
+    distanceMethod: String?,
+    speciesName: String?,
+    speciesInherited: Boolean,
+    note: String?,
+    actions: @Composable () -> Unit = {}
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(canopyStrokeColor(treeClass))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Tree $number · ${canopyText(diameterMeters)} across",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                note?.let {
+                    Text(text = it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            DetailRow("Class", treeClass.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() })
+            DetailRow("Area", formatArea(areaSquareMeters))
+            DetailRow("Distance", distanceText(distanceMeters, distanceMethod))
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                Text(
+                    text = "Species",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(150.dp)
+                )
+                Text(
+                    text = speciesName ?: "not identified",
+                    fontSize = 13.sp,
+                    fontStyle = if (speciesName != null) FontStyle.Italic else FontStyle.Normal,
+                    modifier = Modifier.weight(1f)
+                )
+                if (speciesName != null && speciesInherited) {
+                    Text(
+                        text = "from cluster",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.tertiaryContainer)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            actions()
+        }
+    }
+}
+
+/** "12.40 m · depth image" — the method in words, and flagged when it's an estimate. */
+private fun distanceText(meters: Double?, method: String?): String {
+    val value = meters?.let { "%.2f m".format(it) } ?: return "—"
+    val how = when (method) {
+        DistanceMethod.ARCORE_DEPTH.name -> "depth (centre)"
+        DistanceMethod.ARCORE_DEPTH_IMAGE.name -> "depth image"
+        DistanceMethod.GEOMETRY_FALLBACK.name -> "⚠ ground-plane estimate"
+        null -> "method unknown"
+        else -> method
+    }
+    return "$value · $how"
 }
 
 /**

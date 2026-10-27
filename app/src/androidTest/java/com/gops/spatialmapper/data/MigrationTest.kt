@@ -13,8 +13,9 @@ import org.junit.runner.RunWith
 private const val TEST_DB = "migration-test.db"
 
 /**
- * Every shipped upgrade, run for real against an older database with rows in it: v4 -> v5, v5 -> v6,
- * and the v4 -> v6 chain a device takes when it skips a release.
+ * Every shipped upgrade, run for real against an older database with rows in it: each hop from
+ * v4 -> v5 through v7 -> v8, and the v4 -> v6 and v4 -> v8 chains a device takes when it skips
+ * releases.
  *
  * This is the check that matters for this project. Every schema change before v5 used
  * `fallbackToDestructiveMigration`, which silently empties the database; the app is a documentation
@@ -149,6 +150,161 @@ class MigrationTest {
         // Both new tables exist after the chain.
         db.query("SELECT COUNT(*) FROM removed_trees").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
         db.query("SELECT COUNT(*) FROM survey_tracks").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+        db.close()
+    }
+
+    /**
+     * v6 -> v7 (tree classification): four columns appended to `sessions`. An existing row must keep
+     * every value it had and read the documented defaults in the new columns.
+     */
+    @Test
+    fun migrate6To7_addsClassColumnsWithDefaults() {
+        helper.createDatabase(TEST_DB, 6).apply {
+            execSQL(
+                "INSERT INTO sessions " +
+                    "(timestampMillis, photoPath, headingIsTrueNorth, compassReliability, label, " +
+                    "polygonVertices, areaSquareMeters) VALUES " +
+                    "(1700000000000, '/data/photo_1.jpg', 1, 'HIGH', 'Before classes', " +
+                    "'12.9716,77.5946;12.9716,77.5948;12.9718,77.5948', 484.2)"
+            )
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 7, true, MIGRATION_6_7)
+
+        db.query(
+            "SELECT label, areaSquareMeters, treeClass, classSource, classConfirmedAtMillis, " +
+                "classLookupVersion FROM sessions"
+        ).use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("Before classes", cursor.getString(0))
+            assertEquals(484.2, cursor.getDouble(1), 1e-9)
+            assertEquals("UNCLASSIFIED", cursor.getString(2))
+            assertEquals("UNSET", cursor.getString(3))
+            assertTrue(cursor.isNull(4))
+            assertTrue(cursor.isNull(5))
+        }
+        db.close()
+    }
+
+    /**
+     * v7 -> v8 (clusters): five nullable depth columns on `sessions`, a nullable memberIndex on
+     * `identification_attempts`, and the new `cluster_members` child table.
+     *
+     * The property that matters: an existing session is untouched and reads as a cluster of ONE —
+     * no member rows, no depth image — so nothing about it changes for the operator.
+     */
+    @Test
+    fun migrate7To8_existingSessionBecomesAClusterOfOne() {
+        helper.createDatabase(TEST_DB, 7).apply {
+            execSQL(
+                "INSERT INTO sessions " +
+                    "(timestampMillis, photoPath, headingIsTrueNorth, compassReliability, label, " +
+                    "polygonVertices, areaSquareMeters, canopyDiameterMeters, treeClass, " +
+                    "classSource, speciesScientificName) VALUES " +
+                    "(1700000000000, '/data/photo_1.jpg', 1, 'HIGH', 'Neem by the gate', " +
+                    "'12.9716,77.5946;12.9716,77.5948;12.9718,77.5948', 484.2, 6.4, 'PALM', " +
+                    "'MANUAL', 'Azadirachta indica')"
+            )
+            execSQL(
+                "INSERT INTO identification_attempts " +
+                    "(sessionId, timestampMillis, photoPath, candidatesJson, confirmedScientificName) " +
+                    "VALUES (1, 1700000000001, '/data/leaf.jpg', '[]', 'Azadirachta indica')"
+            )
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, MIGRATION_7_8)
+
+        db.query(
+            "SELECT label, areaSquareMeters, canopyDiameterMeters, treeClass, speciesScientificName, " +
+                "depthImagePath, depthImageWidth, depthImageHeight, depthRotationDegrees, " +
+                "depthTransform FROM sessions"
+        ).use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("Neem by the gate", cursor.getString(0))
+            assertEquals(484.2, cursor.getDouble(1), 1e-9)
+            assertEquals(6.4, cursor.getDouble(2), 1e-9)
+            assertEquals("PALM", cursor.getString(3))
+            assertEquals("Azadirachta indica", cursor.getString(4))
+            for (column in 5..9) assertTrue("depth column $column must be null", cursor.isNull(column))
+        }
+        db.query("SELECT confirmedScientificName, memberIndex FROM identification_attempts").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("Azadirachta indica", cursor.getString(0))
+            assertTrue("a pre-v8 attempt was for the capture as a whole", cursor.isNull(1))
+        }
+        db.query("SELECT COUNT(*) FROM cluster_members").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("an existing session is a cluster of one", 0, cursor.getInt(0))
+        }
+
+        // The new table accepts a member and cascades with its session.
+        db.execSQL("PRAGMA foreign_keys = ON")
+        db.execSQL(
+            "INSERT INTO cluster_members (sessionId, memberIndex, ellipseCenterXPixels, " +
+                "ellipseCenterYPixels, ellipseRadiusXPixels, ellipseRadiusYPixels, distanceMeters, " +
+                "distanceMethod, bearingDegrees, canopyDiameterHorizontalMeters, " +
+                "canopyDiameterVerticalMeters, canopyDiameterMeters, projectedLatitude, " +
+                "projectedLongitude, polygonVertices, areaSquareMeters, treeClass, classSource, " +
+                "speciesInherited) VALUES (1, 2, 1200.5, 800.25, 140.0, 160.0, 11.75, " +
+                "'ARCORE_DEPTH_IMAGE', 131.2, 5.1, 5.9, 5.5, 12.97175, 77.59482, " +
+                "'12.9716,77.5946;12.9716,77.5948;12.9718,77.5948', 23.4, 'UNCLASSIFIED', 'UNSET', 0)"
+        )
+        db.query("SELECT memberIndex, distanceMethod FROM cluster_members").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals(2, cursor.getInt(0))
+            assertEquals("ARCORE_DEPTH_IMAGE", cursor.getString(1))
+        }
+        db.execSQL("DELETE FROM sessions WHERE id = 1")
+        db.query("SELECT COUNT(*) FROM cluster_members").use { cursor ->
+            cursor.moveToFirst()
+            assertEquals("members go with their session", 0, cursor.getInt(0))
+        }
+        db.close()
+    }
+
+    /** The full chain from the oldest supported schema: v4 -> v5 -> v6 -> v7 -> v8. */
+    @Test
+    fun migrate4To8_runsEveryMigrationInSequence() {
+        helper.createDatabase(TEST_DB, 4).apply {
+            execSQL(
+                "INSERT INTO sessions " +
+                    "(timestampMillis, photoPath, headingIsTrueNorth, compassReliability, label, " +
+                    "polygonVertices, canopyDiameterMeters) VALUES " +
+                    "(1700000000000, '/data/photo_1.jpg', 1, 'HIGH', 'Four versions old', " +
+                    "'12.9716,77.5946;12.9716,77.5948;12.9718,77.5948', 6.4)"
+            )
+            execSQL(
+                "INSERT INTO identification_attempts " +
+                    "(sessionId, timestampMillis, photoPath, candidatesJson, confirmedScientificName) " +
+                    "VALUES (1, 1700000000001, '/data/leaf.jpg', '[]', 'Azadirachta indica')"
+            )
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 8, true, *ALL_MIGRATIONS)
+
+        db.query("SELECT label, canopyDiameterMeters, treeClass, depthImagePath FROM sessions").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("Four versions old", cursor.getString(0))
+            assertEquals(6.4, cursor.getDouble(1), 1e-9)
+            assertEquals("UNCLASSIFIED", cursor.getString(2))
+            assertTrue(cursor.isNull(3))
+        }
+        db.query("SELECT confirmedScientificName FROM identification_attempts").use { cursor ->
+            assertEquals(1, cursor.count)
+            cursor.moveToFirst()
+            assertEquals("Azadirachta indica", cursor.getString(0))
+        }
+        listOf("removed_trees", "survey_tracks", "cluster_members").forEach { table ->
+            db.query("SELECT COUNT(*) FROM $table").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+        }
         db.close()
     }
 

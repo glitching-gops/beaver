@@ -125,7 +125,14 @@ private sealed interface IdentifyStage {
  * the bottom tab bar is hidden for its duration (see MainActivity), because a tab tap mid-flow would
  * silently drop a capture-and-submit the operator is in the middle of.
  *
+ * CLUSTERS: with [memberId] null this identifies the capture as a whole — the confirmed species goes
+ * on the centre tree (the session row) and, as an inherited suggestion, onto every member that has
+ * no species of its own. With [memberId] set it identifies that ONE member, whose own value then
+ * replaces any inherited one; the session row and the other members are not touched.
+ *
  * @param sessionOrigin where the operator stood when this plant was recorded, for the proximity check.
+ * @param memberId      the cluster member's row id when identifying one member on its own.
+ * @param memberIndex   that member's tree number, recorded on the attempt for the audit trail.
  * @param onDismiss     leave without changing the species (close, skip, or back).
  * @param onIdentified  a candidate was confirmed and persisted.
  */
@@ -134,6 +141,8 @@ fun IdentifyPlantScreen(
     sessionId: Long,
     sessionLabel: String,
     sessionOrigin: LatLng?,
+    memberId: Long? = null,
+    memberIndex: Int? = null,
     onDismiss: () -> Unit,
     onIdentified: () -> Unit,
     modifier: Modifier = Modifier
@@ -190,7 +199,8 @@ fun IdentifyPlantScreen(
                         timestampMillis = System.currentTimeMillis(),
                         photoPath = submitting.photo.absolutePath,
                         candidatesJson = encodeCandidates(result.candidates),
-                        confirmedScientificName = null
+                        confirmedScientificName = null,
+                        memberIndex = memberIndex
                     )
                 )
                 // Written BEFORE the operator picks anything, so an attempt that gets skipped or
@@ -231,7 +241,7 @@ fun IdentifyPlantScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         IdentifyTopBar(
-            title = "Identify plant",
+            title = if (memberIndex != null) "Identify tree $memberIndex" else "Identify plant",
             subtitle = sessionLabel.ifBlank { "(no label)" },
             onClose = close
         )
@@ -286,7 +296,8 @@ fun IdentifyPlantScreen(
                                 commonName = candidate.commonName,
                                 genus = candidate.genus,
                                 confidence = candidate.score,
-                                source = SPECIES_SOURCE_PLANTNET
+                                source = SPECIES_SOURCE_PLANTNET,
+                                memberId = memberId
                             )
                             // Only now — the screen tears down as a result of this call, taking
                             // `scope` with it, so nothing may follow the write.

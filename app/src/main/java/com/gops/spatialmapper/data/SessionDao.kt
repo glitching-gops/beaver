@@ -75,6 +75,24 @@ interface SessionDao {
     @Query("UPDATE sessions SET areaSquareMeters = :areaSquareMeters WHERE id = :id")
     suspend fun updateArea(id: Long, areaSquareMeters: Double)
 
+    /**
+     * Writes the tree classification (manual growth form).
+     *
+     * A targeted UPDATE rather than `@Update(session)`: the detail screen holds a row that was read
+     * some time ago, and re-inserting all of it would let a stale copy clobber anything else that
+     * changed meanwhile. This touches exactly the four columns classification owns.
+     */
+    @Query(
+        "UPDATE sessions SET treeClass = :treeClass, classSource = :classSource, " +
+            "classConfirmedAtMillis = :classConfirmedAtMillis WHERE id = :id"
+    )
+    suspend fun updateTreeClass(
+        id: Long,
+        treeClass: String,
+        classSource: String,
+        classConfirmedAtMillis: Long?
+    )
+
     @Query("DELETE FROM sessions WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

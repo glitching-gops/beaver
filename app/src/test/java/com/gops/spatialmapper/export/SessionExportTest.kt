@@ -1,6 +1,7 @@
 package com.gops.spatialmapper.export
 
 import com.google.android.gms.maps.model.LatLng
+import com.gops.spatialmapper.data.ClusterMemberEntity
 import com.gops.spatialmapper.data.SessionEntity
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -27,7 +28,9 @@ class SessionExportTest {
     private fun session(
         id: Long = 1L,
         label: String = "Neem by the gate",
-        vertices: List<LatLng> = square
+        vertices: List<LatLng> = square,
+        treeClass: String = "UNCLASSIFIED",
+        classSource: String = "UNSET"
     ) = SessionEntity(
         id = id,
         timestampMillis = 1_700_000_000_000L,
@@ -56,7 +59,9 @@ class SessionExportTest {
         speciesGenus = "Azadirachta",
         speciesConfidence = 0.87,
         speciesSource = "plantnet",
-        areaSquareMeters = 484.2
+        areaSquareMeters = 484.2,
+        treeClass = treeClass,
+        classSource = classSource
     )
 
     private fun firstFeature(json: String): JSONObject =
@@ -267,11 +272,171 @@ class SessionExportTest {
         )
     }
 
+    // -----------------------------------------------------------------------------------------
+    // Clusters: every tree is its own feature and its own row.
+    // -----------------------------------------------------------------------------------------
+
+    private val memberSquare = listOf(
+        LatLng(12.9720, 77.5950),
+        LatLng(12.9720, 77.5952),
+        LatLng(12.9722, 77.5952),
+        LatLng(12.9722, 77.5950)
+    )
+
+    private fun member(
+        sessionId: Long = 1L,
+        index: Int = 2,
+        species: String? = null,
+        inherited: Boolean = false,
+        method: String = "ARCORE_DEPTH_IMAGE"
+    ) = ClusterMemberEntity(
+        id = 100L + index,
+        sessionId = sessionId,
+        memberIndex = index,
+        ellipseCenterXPixels = 1200.0,
+        ellipseCenterYPixels = 800.0,
+        ellipseRadiusXPixels = 140.0,
+        ellipseRadiusYPixels = 160.0,
+        distanceMeters = 11.75,
+        distanceMethod = method,
+        bearingDegrees = 131.2,
+        canopyDiameterHorizontalMeters = 5.1,
+        canopyDiameterVerticalMeters = 5.9,
+        canopyDiameterMeters = 5.5,
+        projectedLatitude = 12.9721,
+        projectedLongitude = 77.5951,
+        polygonVertices = memberSquare,
+        areaSquareMeters = 23.4,
+        treeClass = "PALM",
+        classSource = "MANUAL",
+        speciesScientificName = species,
+        speciesInherited = inherited
+    )
+
+    private fun features(json: String) = JSONObject(json).getJSONArray("features").let { array ->
+        (0 until array.length()).map { array.getJSONObject(it) }
+    }
+
+    @Test
+    fun `each cluster member is its own polygon feature right after its session`() {
+        val json = sessionsToGeoJson(
+            sessions = listOf(session(id = 1L), session(id = 2L)),
+            members = listOf(member(sessionId = 1L, index = 3), member(sessionId = 1L, index = 2))
+        )
+        val all = features(json)
+        assertEquals(
+            listOf("session-1", "member-1-2", "member-1-3", "session-2"),
+            all.map { it.getString("id") }
+        )
+        assertEquals(2, JSONObject(json).getInt("session_count"))
+        assertEquals(4, JSONObject(json).getInt("tree_count"))
+
+        val memberFeature = all[1]
+        assertEquals("Polygon", memberFeature.getJSONObject("geometry").getString("type"))
+        // Its own geometry, not its session's — in GeoJSON order (lon first).
+        val firstPosition = memberFeature.getJSONObject("geometry").getJSONArray("coordinates")
+            .getJSONArray(0).getJSONArray(0)
+        assertEquals(77.595, firstPosition.getDouble(0), 0.001)
+        assertEquals(12.972, firstPosition.getDouble(1), 0.001)
+    }
+
+    @Test
+    fun `member properties identify the cluster and describe the member, not its centre tree`() {
+        val json = sessionsToGeoJson(
+            sessions = listOf(session(id = 7L)),
+            members = listOf(member(sessionId = 7L, index = 2, species = "Cocos nucifera", inherited = true))
+        )
+        val (centre, member) = features(json).map { it.getJSONObject("properties") }
+
+        assertEquals("session", centre.getString("record_type"))
+        assertEquals(7L, centre.getLong("session_id"))
+        assertEquals(1, centre.getInt("member_index"))
+        assertEquals(2, centre.getInt("cluster_size"))
+        assertEquals(false, centre.getBoolean("species_inherited"))
+        assertEquals("ARCORE_DEPTH", centre.getString("distance_method"))
+
+        assertEquals("cluster_member", member.getString("record_type"))
+        assertEquals("the member's cluster is its session", 7L, member.getLong("session_id"))
+        assertEquals(2, member.getInt("member_index"))
+        assertEquals(2, member.getInt("cluster_size"))
+        assertEquals(true, member.getBoolean("species_inherited"))
+        assertEquals("ARCORE_DEPTH_IMAGE", member.getString("distance_method"))
+        assertEquals(11.75, member.getDouble("distance_meters"), 1e-9)
+        assertEquals(131.2, member.getDouble("bearing_degrees"), 1e-9)
+        assertEquals(5.5, member.getDouble("canopy_diameter_mean_m"), 1e-9)
+        assertEquals(23.4, member.getDouble("area_square_meters"), 1e-9)
+        assertEquals("PALM", member.getString("tree_class"))
+        assertEquals("Cocos nucifera", member.getString("species_scientific_name"))
+        assertEquals(12.9721, member.getDouble("projected_latitude"), 1e-9)
+        // Capture-level facts are shared with the session.
+        assertEquals(centre.getString("photo_path"), member.getString("photo_path"))
+        assertEquals(123.4, member.getDouble("heading_degrees"), 1e-9)
+        // Both kinds carry exactly the same property names, so the CSV columns line up.
+        assertEquals(centre.keys().asSequence().toSet(), member.keys().asSequence().toSet())
+    }
+
+    @Test
+    fun `a member without a species exports none rather than its centre tree's`() {
+        // The fixture session IS identified (Azadirachta indica); its unidentified member is not.
+        val json = sessionsToGeoJson(listOf(session(id = 1L)), members = listOf(member(species = null)))
+        val memberProperties = features(json)[1].getJSONObject("properties")
+        assertTrue(memberProperties.isNull("species_scientific_name"))
+        assertTrue(memberProperties.isNull("species_confidence"))
+        assertEquals(false, memberProperties.getBoolean("species_inherited"))
+    }
+
+    @Test
+    fun `member feature ids never collide with session, removed-tree or survey ids`() {
+        val json = sessionsToGeoJson(
+            sessions = listOf(session(id = 1L), session(id = 2L)),
+            removedTrees = listOf(
+                com.gops.spatialmapper.data.RemovedTreeEntity(
+                    id = 1L, latitude = 12.97, longitude = 77.59, officerLatitude = null,
+                    officerLongitude = null, officerAccuracyMeters = null, proximityMeters = null,
+                    markedAtMillis = 1L
+                )
+            ),
+            members = listOf(member(sessionId = 1L, index = 2), member(sessionId = 2L, index = 2))
+        )
+        val ids = features(json).map { it.getString("id") }
+        assertEquals("ids must be unique across the collection: $ids", ids.size, ids.toSet().size)
+        assertTrue(ids.contains("member-1-2") && ids.contains("member-2-2"))
+    }
+
+    @Test
+    fun `csv writes one row per tree with the cluster columns`() {
+        val rows = csvRows(
+            sessionsToCsv(
+                listOf(session(id = 1L), session(id = 2L)),
+                members = listOf(member(sessionId = 1L, index = 2, method = "GEOMETRY_FALLBACK"))
+            )
+        )
+        assertEquals("header + 3 trees", 4, rows.size)
+        val headers = rows[0].split(",")
+        listOf("member_index", "cluster_size", "species_inherited", "distance_method", "bearing_degrees")
+            .forEach { assertTrue("missing column $it", headers.contains(it)) }
+
+        // The member row: the second line, right after its session.
+        val memberCells = rows[2].split(",")
+        assertEquals("cluster_member", memberCells[headers.indexOf("record_type")])
+        assertEquals("1", memberCells[headers.indexOf("session_id")])
+        assertEquals("2", memberCells[headers.indexOf("member_index")])
+        assertEquals("2", memberCells[headers.indexOf("cluster_size")])
+        assertEquals("false", memberCells[headers.indexOf("species_inherited")])
+        assertEquals("GEOMETRY_FALLBACK", memberCells[headers.indexOf("distance_method")])
+        assertTrue("its own footprint", rows[2].contains("12.972,77.595;"))
+
+        // A session without members is a cluster of one.
+        val singleCells = rows[3].split(",")
+        assertEquals("1", singleCells[headers.indexOf("cluster_size")])
+        assertEquals("1", singleCells[headers.indexOf("member_index")])
+    }
+
     @Test
     fun `no sessions yields a header only csv`() {
         val rows = csvRows(sessionsToCsv(emptyList()))
         assertEquals(1, rows.size)
         // record_type leads every row now that the export carries two kinds of record.
-        assertTrue(rows[0].startsWith("record_type,session_id,label,"))
+        assertTrue(rows[0].startsWith("record_type,session_id,member_index,cluster_size,label,"))
     }
 }

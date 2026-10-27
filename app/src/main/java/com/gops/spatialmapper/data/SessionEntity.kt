@@ -85,9 +85,36 @@ data class SessionEntity(
     val speciesConfidence: Double? = null,   // 0..1, as reported by the identification service
     val speciesSource: String? = null,       // "plantnet" today; a column so a second source can exist
 
+    // --- Classification (manual growth form, optional) ---
+    // Operator-chosen growth form, stored as the [TreeClass.name] string. Defaults to UNCLASSIFIED.
+    val treeClass: String = TreeClass.UNCLASSIFIED.name,
+    // Source of the classification: UNSET (no class), MANUAL (operator chose), or DERIVED (from species).
+    // Stored as the [ClassSource.name] string. Only MANUAL is written in this phase; DERIVED is reserved
+    // for the species-lookup phase.
+    val classSource: String = ClassSource.UNSET.name,
+    // Timestamp (milliseconds since epoch) when the operator confirmed or last changed the class.
+    // Null if the tree is still UNCLASSIFIED.
+    val classConfirmedAtMillis: Long? = null,
+    // Unused in this phase, reserved for the species-lookup phase. Allows the next migration to
+    // associate a specific species-lookup service or version with the refined class without another
+    // schema change.
+    val classLookupVersion: String? = null,
+
     // --- Derived ---
     // Spherical area of [polygonVertices], in square meters. Written at save time from the confirmed
     // outline, and backfilled at startup for rows that predate the calculation. Defaulted to null so
     // the DAO's targeted UPDATE, not the constructor, remains the only way it gets set after a save.
-    val areaSquareMeters: Double? = null
+    val areaSquareMeters: Double? = null,
+
+    // --- Saved depth image (v8, ARCore path only; all null otherwise and for older rows) ---
+    // The 16-bit depth image from the shutter frame, kept so each cluster member can be measured at
+    // its own position (see ClusterMemberEntity). The centre tree's distance above is still the
+    // live centre reading; this file does not feed it. Deleted with the row, like the photo.
+    val depthImagePath: String? = null,
+    val depthImageWidth: Int? = null,
+    val depthImageHeight: Int? = null,
+    // Clockwise rotation the photo received relative to the depth image (the sensor orientation).
+    val depthRotationDegrees: Int? = null,
+    // ARCore's raw-camera-pixels -> depth-normalized affine, "a,b,c,d,e,f" (DepthAlignment).
+    val depthTransform: String? = null
 )

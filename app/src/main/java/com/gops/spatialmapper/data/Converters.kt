@@ -84,4 +84,64 @@ class Converters {
             SurveyPoint(LatLng(lat, lng), millis)
         }
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Tree classification: TreeClass <-> String (enum.name)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Converts a [TreeClass] enum to its [name] string for storage. The reverse conversion
+     * is handled by [stringToTreeClass], which is defensive: an unknown or corrupt string falls
+     * back to [TreeClass.UNCLASSIFIED] rather than crashing.
+     */
+    @TypeConverter
+    fun treeClassToString(treeClass: TreeClass?): String =
+        treeClass?.name ?: TreeClass.UNCLASSIFIED.name
+
+    /**
+     * Converts a stored string back to a [TreeClass] enum. If the string is null, blank, or an
+     * unknown enum name (e.g., a future enum value not yet recognized), it falls back to
+     * [TreeClass.UNCLASSIFIED] rather than throwing. This defensive approach allows a database
+     * row to gracefully degrade rather than crashing the app when it encounters a value from a
+     * newer version or a corrupted cell.
+     */
+    @TypeConverter
+    fun stringToTreeClass(data: String?): TreeClass =
+        if (data.isNullOrBlank()) {
+            TreeClass.UNCLASSIFIED
+        } else {
+            try {
+                TreeClass.valueOf(data)
+            } catch (e: IllegalArgumentException) {
+                TreeClass.UNCLASSIFIED
+            }
+        }
+
+    // ---------------------------------------------------------------------------------------
+    // Classification source: ClassSource <-> String (enum.name)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Converts a [ClassSource] enum to its [name] string for storage. The reverse conversion
+     * is handled by [stringToClassSource], which is defensive.
+     */
+    @TypeConverter
+    fun classSourceToString(source: ClassSource?): String =
+        source?.name ?: ClassSource.UNSET.name
+
+    /**
+     * Converts a stored string back to a [ClassSource] enum. If the string is null, blank, or an
+     * unknown enum name, it falls back to [ClassSource.UNSET] rather than throwing.
+     */
+    @TypeConverter
+    fun stringToClassSource(data: String?): ClassSource =
+        if (data.isNullOrBlank()) {
+            ClassSource.UNSET
+        } else {
+            try {
+                ClassSource.valueOf(data)
+            } catch (e: IllegalArgumentException) {
+                ClassSource.UNSET
+            }
+        }
 }

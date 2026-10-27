@@ -17,13 +17,23 @@ import androidx.room.TypeConverters
  * wiped the database — there was no history worth keeping — and the previous revision of this file
  * said to flip it "when the first data-preserving migration lands". This is that version.
  *
- * VERSION 6 — THE SECOND REAL MIGRATION, AND STILL NO DESTRUCTIVE FALLBACK.
+ * VERSION 7 — TREE CLASSIFICATION (manual growth forms).
+ *
+ * v6 -> v7 adds four new columns to the sessions table: treeClass, classSource, classConfirmedAtMillis,
+ * and classLookupVersion. All are additive columns with defaults, so every existing row survives with
+ * UNCLASSIFIED as the default class and UNSET as the source. No table rebuild, no data copy.
+ *
+ * VERSION 8 — CLUSTERS (several trees per capture).
+ *
+ * v7 -> v8 via [MIGRATION_7_8]: a new `cluster_members` child table (one row per EXTRA tree in a
+ * capture, ON DELETE CASCADE from `sessions`), five nullable `sessions` columns describing the depth
+ * image saved at shutter time, and a nullable `identification_attempts.memberIndex`. Additive only:
+ * the session row still IS the centre tree, so every existing session reads as a cluster of one with
+ * no data moved.
  *
  * v4 -> v5 added the `removed_trees` table via [MIGRATION_4_5]; v5 -> v6 adds `survey_tracks` via
- * [MIGRATION_5_6]. Both are single CREATE TABLE statements for tables that did not previously exist
- * and neither touches an existing table, so every row a user already has survives. That is not an
- * aspiration — it is a property of the statements, verified in MigrationTest and in
- * `tools/verify_migration.py`.
+ * [MIGRATION_5_6]. v6 -> v7 alters `sessions` via [MIGRATION_6_7]. All preserve existing rows by
+ * construction, verified in MigrationTest and in `tools/verify_migration.py`.
  *
  * `fallbackToDestructiveMigration` is GONE, deliberately, and should not come back. This app is a
  * documentation tool for a government officer: the rows in it are field observations that cannot be
@@ -41,9 +51,10 @@ import androidx.room.TypeConverters
         SessionEntity::class,
         IdentificationAttemptEntity::class,
         RemovedTreeEntity::class,
-        SurveyTrackEntity::class
+        SurveyTrackEntity::class,
+        ClusterMemberEntity::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -56,6 +67,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun removedTreeDao(): RemovedTreeDao
 
     abstract fun surveyTrackDao(): SurveyTrackDao
+
+    abstract fun clusterMemberDao(): ClusterMemberDao
 
     companion object {
         @Volatile

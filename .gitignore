@@ -105,6 +105,8 @@ graphify-out/
 # in the project root during development; ignoring the pattern keeps survey photos out of a public
 # repo by default.
 /SpatialMapper_*.jpg
+# The depth image saved alongside each AR capture (capture/DepthMap.kt) — the same field data.
+SpatialMapper_*.smdepth
 *.hprof
 
 # Offline basemap archives and their build outputs (tools/basemap/). Regenerable from the script,
@@ -123,3 +125,6 @@ Thumbs.db
 desktop.ini
 *~
 *.swp
+
+# Python bytecode from running tools/*.py
+__pycache__/

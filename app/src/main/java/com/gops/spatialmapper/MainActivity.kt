@@ -69,6 +69,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.gms.maps.model.LatLng
 import com.google.ar.core.Config
 import com.gops.spatialmapper.capture.CameraIntrinsicsSnapshot
+import com.gops.spatialmapper.capture.SavedDepthImage
+import com.gops.spatialmapper.capture.depthFileFor
+import com.gops.spatialmapper.capture.saveDepthImage
 import com.gops.spatialmapper.capture.backCameraSensorOrientation
 import com.gops.spatialmapper.capture.cameraIntrinsicsSnapshot
 import com.gops.spatialmapper.capture.fallbackIntrinsicsForPhoto
@@ -84,6 +87,7 @@ import com.gops.spatialmapper.map.GlobalMapScreen
 import com.gops.spatialmapper.map.MapReviewScreen
 import com.gops.spatialmapper.measure.CanopyFramingScreen
 import com.gops.spatialmapper.measure.CanopyMeasurement
+import com.gops.spatialmapper.measure.ClusterMemberMeasurement
 import com.gops.spatialmapper.projection.roundTripDistanceMeters
 import com.gops.spatialmapper.telemetry.CaptureTelemetry
 import com.gops.spatialmapper.telemetry.DistanceMethod
@@ -101,6 +105,13 @@ private const val TAG = "SpatialMapperCamera"
 private const val ARCORE_LIFECYCLE_TAG = "SpatialMapperArLifecycle"
 private const val TELEMETRY_TAG = "SpatialMapperTelemetry"
 
+/**
+ * Assumed camera height above the ground for the ground-plane distance fallback. Editable on the
+ * capture screen in fallback mode. On the ARCore path the field isn't shown, so a cluster member
+ * whose depth window comes up empty falls back with this value.
+ */
+private const val DEFAULT_CAMERA_HEIGHT_METERS = 1.5
+
 /** How long to wait for the capture path to hand back a written JPEG before giving up on it. */
 private const val CAPTURE_TIMEOUT_MS = 8_000L
 
@@ -113,7 +124,11 @@ private data class FramingRequest(
     val capture: CaptureTelemetry,
     val photoPath: String,
     val intrinsics: CameraIntrinsicsSnapshot,
-    val distanceMeters: Float
+    val distanceMeters: Float,
+    /** The shutter frame's depth image; null on the CameraX path or if ARCore had none. */
+    val depth: SavedDepthImage?,
+    /** The camera-height setting at shutter time, for the members' ground-plane fallback. */
+    val cameraHeightMeters: Double
 )
 
 /**
@@ -124,7 +139,10 @@ private data class FramingRequest(
 private data class ReviewRequest(
     val capture: CaptureTelemetry,
     val photoPath: String,
-    val measurement: CanopyMeasurement
+    val measurement: CanopyMeasurement,
+    /** The extra trees framed on the same photo; empty for a single-tree capture. */
+    val members: List<ClusterMemberMeasurement>,
+    val depth: SavedDepthImage?
 )
 
 /**
@@ -138,7 +156,10 @@ private data class ReviewRequest(
 private data class IdentifyRequest(
     val sessionId: Long,
     val label: String,
-    val origin: LatLng?
+    val origin: LatLng?,
+    /** One cluster member identified on its own (row id + tree number); null = the whole capture. */
+    val memberId: Long? = null,
+    val memberIndex: Int? = null
 )
 
 /**
@@ -294,6 +315,8 @@ class MainActivity : ComponentActivity() {
                                 sessionId = identify.sessionId,
                                 sessionLabel = identify.label,
                                 sessionOrigin = identify.origin,
+                                memberId = identify.memberId,
+                                memberIndex = identify.memberIndex,
                                 onDismiss = { identifyRequest = null },
                                 // Nothing else to do on success: detail observes its row, so the
                                 // species is already on screen by the time this closes.
@@ -309,6 +332,8 @@ class MainActivity : ComponentActivity() {
                                 capture = request.capture,
                                 photoPath = request.photoPath,
                                 measurement = request.measurement,
+                                members = request.members,
+                                depth = request.depth,
                                 onBack = { reviewRequest = null },
                                 // After a successful save, drop the whole capture and land on the
                                 // History tab so the user immediately sees what they just persisted.
@@ -326,17 +351,24 @@ class MainActivity : ComponentActivity() {
                                 photoPath = framing.photoPath,
                                 intrinsics = framing.intrinsics,
                                 distanceMeters = framing.distanceMeters,
+                                capture = framing.capture,
+                                depth = framing.depth,
+                                cameraHeightMeters = framing.cameraHeightMeters,
                                 // Cancel abandons the capture outright: nothing was saved, so the
-                                // JPEG would be orphaned with no row pointing at it.
+                                // JPEG (and its depth file) would be orphaned with no row pointing
+                                // at them.
                                 onCancel = {
                                     discardCapturePhoto(framing.photoPath)
+                                    discardCapturePhoto(framing.depth?.path.orEmpty())
                                     framingRequest = null
                                 },
-                                onConfirm = { measurement ->
+                                onConfirm = { measurement, members ->
                                     reviewRequest = ReviewRequest(
                                         capture = framing.capture,
                                         photoPath = framing.photoPath,
-                                        measurement = measurement
+                                        measurement = measurement,
+                                        members = members,
+                                        depth = framing.depth
                                     )
                                 },
                                 modifier = screenModifier
@@ -377,6 +409,10 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onIdentify = { sessionId, label, origin ->
                                         identifyRequest = IdentifyRequest(sessionId, label, origin)
+                                    },
+                                    onIdentifyMember = { sessionId, label, origin, memberId, memberIndex ->
+                                        identifyRequest =
+                                            IdentifyRequest(sessionId, label, origin, memberId, memberIndex)
                                     },
                                     modifier = screenModifier
                                 )
@@ -431,6 +467,13 @@ private class ArCaptureRequest {
     var file: File? = null
 }
 
+/** What the AR shutter frame produced: photo, camera model, and (if ARCore had one) depth. */
+private class ArCaptureResult(
+    val photo: File?,
+    val intrinsics: CameraIntrinsicsSnapshot?,
+    val depth: SavedDepthImage?
+)
+
 /**
  * Where a capture is between the shutter press and the framing screen.
  *
@@ -444,7 +487,8 @@ private sealed interface CaptureStage {
     data class Resolving(
         val capture: CaptureTelemetry,
         val photoPath: String,
-        val intrinsics: CameraIntrinsicsSnapshot?
+        val intrinsics: CameraIntrinsicsSnapshot?,
+        val depth: SavedDepthImage? = null
     ) : CaptureStage
 }
 
@@ -460,7 +504,7 @@ private fun CameraCaptureScreen(
 
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var depthStatus by remember { mutableStateOf(ArCoreDepthStatus.CHECKING) }
-    var cameraHeightText by remember { mutableStateOf("1.5") }
+    var cameraHeightText by remember { mutableStateOf(DEFAULT_CAMERA_HEIGHT_METERS.toString()) }
     var arDistanceMeters by remember { mutableStateOf<Float?>(null) }
     // The most recent capture's snapshot, shown as the on-screen projected-target readout.
     var lastCapture by remember { mutableStateOf<CaptureTelemetry?>(null) }
@@ -518,6 +562,7 @@ private fun CameraCaptureScreen(
         delay(CAPTURE_TIMEOUT_MS)
         if (stage is CaptureStage.Capturing) {
             discardCapturePhoto(lastPhotoPath.orEmpty())
+            lastPhotoPath?.let { discardCapturePhoto(depthFileFor(File(it)).absolutePath) }
             statusMessage = "The camera didn't return a frame in time — try again."
             stage = CaptureStage.Idle
         }
@@ -544,11 +589,13 @@ private fun CameraCaptureScreen(
             intrinsics == null -> {
                 Log.w(TAG, "No camera intrinsics for ${currentStage.photoPath}; discarding capture")
                 discardCapturePhoto(currentStage.photoPath)
+                discardCapturePhoto(currentStage.depth?.path.orEmpty())
                 statusMessage = "Couldn't read the camera's focal length — capture discarded."
                 stage = CaptureStage.Idle
             }
             distance == null || distance <= 0f -> {
                 discardCapturePhoto(currentStage.photoPath)
+                discardCapturePhoto(currentStage.depth?.path.orEmpty())
                 statusMessage = "No distance reading for that capture — try again."
                 stage = CaptureStage.Idle
             }
@@ -559,7 +606,10 @@ private fun CameraCaptureScreen(
                         capture = capture,
                         photoPath = currentStage.photoPath,
                         intrinsics = intrinsics,
-                        distanceMeters = distance
+                        distanceMeters = distance,
+                        depth = currentStage.depth,
+                        cameraHeightMeters = cameraHeightText.toDoubleOrNull()
+                            ?.takeIf { it > 0.0 } ?: DEFAULT_CAMERA_HEIGHT_METERS
                     )
                 )
             }
@@ -591,17 +641,20 @@ private fun CameraCaptureScreen(
                     captureRequest = arCaptureRequest,
                     sensorOrientation = sensorOrientation,
                     onDistanceMeters = { arDistanceMeters = it },
-                    onCaptureResult = { savedFile, intrinsics ->
+                    onCaptureResult = { result ->
                         val pending = lastCapture
+                        val savedFile = result.photo
                         if (savedFile == null || pending == null) {
                             discardCapturePhoto(lastPhotoPath.orEmpty())
+                            discardCapturePhoto(result.depth?.path.orEmpty())
                             statusMessage = "Couldn't save the captured frame — try again."
                             stage = CaptureStage.Idle
                         } else {
                             stage = CaptureStage.Resolving(
                                 capture = pending,
                                 photoPath = savedFile.absolutePath,
-                                intrinsics = intrinsics
+                                intrinsics = result.intrinsics,
+                                depth = result.depth
                             )
                         }
                     }
@@ -767,7 +820,7 @@ private fun ArDepthCameraFeed(
     captureRequest: ArCaptureRequest,
     sensorOrientation: Int,
     onDistanceMeters: (Float?) -> Unit,
-    onCaptureResult: (File?, CameraIntrinsicsSnapshot?) -> Unit,
+    onCaptureResult: (ArCaptureResult) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // rememberUpdatedState keeps the long-lived onSessionUpdated callback pointed at the latest
@@ -816,8 +869,16 @@ private fun ArDepthCameraFeed(
                 // focal length and photo are guaranteed to share a pixel space.
                 val intrinsics = frame.cameraIntrinsicsSnapshot(sensorOrientation)
                 val saved = if (file != null) saveArFrameAsJpeg(frame, file, sensorOrientation) else false
+                // The depth image of the SAME frame, so each cluster member can be measured where
+                // it stands. Best-effort: null just means members fall back to geometry. It does not
+                // touch the centre distance, which came from the live reading at the press.
+                val depth = if (saved && file != null) {
+                    saveDepthImage(frame, depthFileFor(file), sensorOrientation)
+                } else {
+                    null
+                }
                 captureRequest.pending = false
-                currentOnCaptureResult(if (saved) file else null, intrinsics)
+                currentOnCaptureResult(ArCaptureResult(if (saved) file else null, intrinsics, depth))
             }
         }
     )
