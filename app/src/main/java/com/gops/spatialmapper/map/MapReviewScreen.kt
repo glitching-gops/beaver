@@ -248,6 +248,12 @@ fun MapReviewScreen(
 
     var label by remember { mutableStateOf("") }
 
+    // Marks vs raw map, for this visit only (plain remember: every review starts with marks shown).
+    // Hiding never touches `trees`: the pins and handles keep their MarkerStates, so showing again
+    // puts every crown back exactly where the operator left it, unsaved nudges included.
+    var marksShown by remember { mutableStateOf(true) }
+    val layers = reviewMapLayers(marksShown)
+
     // BitmapDescriptorFactory requires the Maps SDK to be initialized, which is guaranteed once the
     // map has loaded — so custom icons are created only after onMapLoaded.
     var mapLoaded by remember { mutableStateOf(false) }
@@ -273,8 +279,9 @@ fun MapReviewScreen(
             properties = MapProperties(mapType = MapType.SATELLITE),
             onMapLoaded = { mapLoaded = true }
         ) {
-            if (outline.size >= 3) ClusterOutlinePolygons(outline)
+            if (outline.size >= 3) ClusterOutlinePolygons(outline, visible = layers.clusterOutline)
 
+            // Crowns are never clickable here; on the raw map they are not drawn either.
             trees.forEachIndexed { index, tree ->
                 val displayClass = tree.treeClass ?: TreeClass.UNCLASSIFIED
                 Polygon(
@@ -284,12 +291,13 @@ fun MapReviewScreen(
                     strokePattern = canopyStrokePattern(displayClass),
                     strokeWidth = 5f,
                     geodesic = false,
+                    visible = layers.canopies,
                     zIndex = 1f
                 )
             }
 
             // Origin (photo location): fixed reference, not draggable, azure to distinguish it.
-            originState(origin)?.let { state ->
+            if (layers.originPin) originState(origin)?.let { state ->
                 Marker(
                     state = state,
                     icon = originIcon,
@@ -299,60 +307,69 @@ fun MapReviewScreen(
                 )
             }
 
-            // Tree 1: draggable so the operator can sit the crown(s) on the real plants.
-            Marker(
-                state = centre.pin,
-                draggable = true,
-                title = when {
-                    !isCluster -> "Plant (drag to nudge)"
-                    fineAdjust -> "Tree 1 (drag to move this tree)"
-                    else -> "Tree 1 (drag to move the whole cluster)"
-                },
-                zIndex = 3f,
-                onClick = {
-                    classTarget = 0
-                    false
-                }
-            )
-            Marker(
-                state = centre.radiusHandle,
-                icon = handleIcon,
-                anchor = Offset(0.5f, 0.5f),
-                draggable = true,
-                title = "Canopy size (drag to resize)",
-                zIndex = 4f
-            )
+            // RAW MAP: every draggable marker LEAVES composition, so the Maps SDK has no marker left
+            // to drag or tap and any open info window goes with it. That is safe for the edit state
+            // because each MarkerState lives in its ReviewTree, not in the Marker — the same
+            // remove/re-add the Fine adjust switch already does for member pins.
+            if (layers.dragHandles) {
+                // Tree 1: draggable so the operator can sit the crown(s) on the real plants.
+                Marker(
+                    state = centre.pin,
+                    draggable = true,
+                    title = when {
+                        !isCluster -> "Plant (drag to nudge)"
+                        fineAdjust -> "Tree 1 (drag to move this tree)"
+                        else -> "Tree 1 (drag to move the whole cluster)"
+                    },
+                    zIndex = 3f,
+                    onClick = {
+                        classTarget = 0
+                        false
+                    }
+                )
+                Marker(
+                    state = centre.radiusHandle,
+                    icon = handleIcon,
+                    anchor = Offset(0.5f, 0.5f),
+                    draggable = true,
+                    title = "Canopy size (drag to resize)",
+                    zIndex = 4f
+                )
 
-            // Members' own controls exist only while fine-adjusting: by default the cluster moves
-            // as one, and ten extra pins would only invite accidental drags.
-            if (fineAdjust) {
-                trees.drop(1).forEachIndexed { i, tree ->
-                    key(tree.treeNumber) {
-                        Marker(
-                            state = tree.pin,
-                            icon = memberPinIcon,
-                            draggable = true,
-                            title = "Tree ${tree.treeNumber} (drag to move)",
-                            zIndex = 3f,
-                            onClick = {
-                                classTarget = i + 1
-                                false
-                            }
-                        )
-                        Marker(
-                            state = tree.radiusHandle,
-                            icon = handleIcon,
-                            anchor = Offset(0.5f, 0.5f),
-                            draggable = true,
-                            title = "Tree ${tree.treeNumber} size (drag to resize)",
-                            zIndex = 4f
-                        )
+                // Members' own controls exist only while fine-adjusting: by default the cluster moves
+                // as one, and ten extra pins would only invite accidental drags.
+                if (fineAdjust) {
+                    trees.drop(1).forEachIndexed { i, tree ->
+                        key(tree.treeNumber) {
+                            Marker(
+                                state = tree.pin,
+                                icon = memberPinIcon,
+                                draggable = true,
+                                title = "Tree ${tree.treeNumber} (drag to move)",
+                                zIndex = 3f,
+                                onClick = {
+                                    classTarget = i + 1
+                                    false
+                                }
+                            )
+                            Marker(
+                                state = tree.radiusHandle,
+                                icon = handleIcon,
+                                anchor = Offset(0.5f, 0.5f),
+                                draggable = true,
+                                title = "Tree ${tree.treeNumber} size (drag to resize)",
+                                zIndex = 4f
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Top bar: back to framing.
+        // Top bar: back to framing, and the marks toggle at the far end. Top-right is the one free
+        // corner: Back holds top-left (where the compass also appears), and the editing card covers
+        // the bottom, the zoom controls and the Google logo — so a button down there would sit on the
+        // card, and anywhere mid-map would sit on the crowns being reviewed.
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -363,6 +380,11 @@ fun MapReviewScreen(
             TextButton(onClick = onBack) {
                 Text("‹ Back to camera")
             }
+            Spacer(Modifier.weight(1f))
+            MarksToggleButton(
+                marksShown = marksShown,
+                onToggle = { marksShown = !marksShown }
+            )
         }
 
         // Bottom editing panel: measured size readout, label, class, save.

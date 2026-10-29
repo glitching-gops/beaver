@@ -13,10 +13,13 @@ import com.google.maps.android.compose.Polygon
  * The dotted ring carries the tap, when there is one ([onClick]) — tapping the outline of a capture
  * opens that capture, same as tapping any of its crowns. Interior taps are taken by the crowns,
  * which sit above the outline.
+ *
+ * [visible] = false keeps the native polygons but neither draws them nor lets them take a tap — the
+ * raw-map toggle flips this rather than removing and re-adding the shapes.
  */
 @Composable
 @GoogleMapComposable
-fun ClusterOutlinePolygons(outline: List<LatLng>, onClick: (() -> Unit)? = null) {
+fun ClusterOutlinePolygons(outline: List<LatLng>, onClick: (() -> Unit)? = null, visible: Boolean = true) {
     if (outline.size < 3) return
     Polygon(
         points = outline,
@@ -24,6 +27,7 @@ fun ClusterOutlinePolygons(outline: List<LatLng>, onClick: (() -> Unit)? = null)
         strokeColor = CLUSTER_OUTLINE_HALO_COLOR,
         strokeWidth = CLUSTER_OUTLINE_HALO_WIDTH,
         geodesic = false,
+        visible = visible,
         zIndex = CLUSTER_OUTLINE_HALO_Z_INDEX
     )
     Polygon(
@@ -34,7 +38,9 @@ fun ClusterOutlinePolygons(outline: List<LatLng>, onClick: (() -> Unit)? = null)
         strokeWidth = CLUSTER_OUTLINE_WIDTH,
         geodesic = false,
         zIndex = CLUSTER_OUTLINE_Z_INDEX,
-        clickable = onClick != null,
-        onClick = { onClick?.invoke() }
+        visible = visible,
+        // A hidden ring must not take taps either, so a raw-map tap can never open a capture.
+        clickable = visible && onClick != null,
+        onClick = { if (visible) onClick?.invoke() }
     )
 }

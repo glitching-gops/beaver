@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -224,6 +225,11 @@ fun GlobalMapScreen(
     var selectedRemovedTree by remember { mutableStateOf<RemovedTreeEntity?>(null) }
     var confirmDeleteId by remember { mutableStateOf<Long?>(null) }
 
+    // Marks vs raw map. Plain remember, NOT rememberSaveable or a preference: every visit starts with
+    // marks shown, so an operator can never open the map and wonder where their trees went.
+    var marksShown by remember { mutableStateOf(true) }
+    val layers = globalMapLayers(marksShown = marksShown, markingMode = markingMode)
+
     // Entering targeting mode DETACHES the camera from Scout.
     //
     // Without this the two features fight each other: Scout's follow effect re-centres on the
@@ -337,12 +343,20 @@ fun GlobalMapScreen(
             uiSettings = MapUiSettings(mapToolbarEnabled = false),
             onMapLoaded = { mapLoaded = true }
         ) {
+            // RAW MAP: every overlay below stays in composition and is switched with `visible` (plus
+            // clickable/onClick guards), rather than being removed. The native shapes survive a hide,
+            // so showing them again is one cheap property change per object instead of re-adding
+            // hundreds of polygons — and nothing is re-queried. The two exceptions are single markers
+            // that can open an info window (focus pin, Scout dot): those leave composition, which is
+            // the only way to guarantee their info window goes with them.
+
             // Cluster outlines first and lowest (zIndex just under the crowns), so a tap inside a crown
             // reaches the crown; the dotted ring itself opens the capture too.
             clusters.forEach { cluster ->
                 ClusterOutlinePolygons(
                     outline = cluster.outline,
-                    onClick = if (markingMode) null else ({ onOpenSession(cluster.sessionId) })
+                    onClick = if (markingMode) null else ({ onOpenSession(cluster.sessionId) }),
+                    visible = layers.clusterOutlines
                 )
             }
 
@@ -366,8 +380,11 @@ fun GlobalMapScreen(
                     // Polygons are NOT clickable by default — without this the taps below never fire.
                     // Muted while aiming: a stray tap during targeting would otherwise navigate away
                     // to a session detail and throw away the aim the operator was mid-way through.
-                    clickable = !markingMode,
-                    onClick = { onOpenSession(canopy.sessionId) },
+                    // Hidden crowns are neither drawn nor tappable: a tap on the raw map where a canopy
+                    // used to be must not open a session.
+                    clickable = !markingMode && layers.canopies,
+                    onClick = { if (layers.canopies) onOpenSession(canopy.sessionId) },
+                    visible = layers.canopies,
                     // Keep the highlighted crown on top so an overlapping neighbour can't hide it.
                     zIndex = if (isFocused) 2f else 1f,
                     geodesic = false
@@ -376,7 +393,7 @@ fun GlobalMapScreen(
 
             // A pin on the focused tree: the heavier amber outline reads well when the canopy fills
             // the screen, but this keeps it findable if the operator pans away and zooms out.
-            focused?.let { target ->
+            if (layers.canopies) focused?.let { target ->
                 val pinAt = focusedBounds?.center ?: target.bounds.center
                 Marker(
                     state = remember(target.sessionId, pinAt) { MarkerState(position = pinAt) },
@@ -396,6 +413,7 @@ fun GlobalMapScreen(
                     color = SAVED_TRACK_COLOR,
                     width = SAVED_TRACK_WIDTH,
                     pattern = listOf(Dash(SAVED_TRACK_DASH), Gap(SAVED_TRACK_GAP)),
+                    visible = layers.surveyTrack,
                     zIndex = SAVED_TRACK_Z_INDEX
                 )
             }
@@ -412,11 +430,12 @@ fun GlobalMapScreen(
                     anchor = Offset(0.5f, 0.5f),
                     title = "Removed tree",
                     zIndex = REMOVED_TREE_Z_INDEX,
+                    visible = layers.removedTrees,
                     onClick = {
                         // true = consume the tap. Without it the Maps SDK also opens its own info
                         // window and recentres the camera, which during aiming would move the
-                        // reticle off target.
-                        if (!markingMode) selectedRemovedTree = removedTree
+                        // reticle off target — and on the raw map would move the camera at all.
+                        if (!markingMode && layers.removedTrees) selectedRemovedTree = removedTree
                         true
                     }
                 )
@@ -427,16 +446,20 @@ fun GlobalMapScreen(
             // scouting on this map instead of a second one is seeing recorded trees relative to where
             // you are standing. The trail sits under them and the live marker well above them, so
             // neither the survey data nor the operator's own position can be hidden by the other.
+            //
+            // Hiding these is drawing only: `scout` is still collected and the service keeps
+            // recording, so a survey walked on the raw map saves exactly as it would otherwise.
             if (scout.active) {
                 if (scout.trail.size >= 2) {
                     Polyline(
                         points = scout.trail,
                         color = SCOUT_TRAIL_COLOR,
                         width = SCOUT_TRAIL_WIDTH,
+                        visible = layers.scoutPosition,
                         zIndex = SCOUT_TRAIL_Z_INDEX
                     )
                 }
-                scout.position?.let { position ->
+                if (layers.scoutPosition) scout.position?.let { position ->
                     Marker(
                         // rememberUpdatedMarkerState, NOT remember { MarkerState(...) }: the same
                         // state object is retained and its position updated as fixes arrive, so the
@@ -471,6 +494,7 @@ fun GlobalMapScreen(
                 // TREES, not sessions: a cluster of four adds four, here and in the legend.
                 treeCount = canopies.size,
                 classCounts = remember(canopies) { canopies.groupingBy { it.treeClass }.eachCount() },
+                showLegend = layers.classLegend,
                 onClearFocus = onClearFocus,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
@@ -555,10 +579,33 @@ fun GlobalMapScreen(
 
         // "Mark removed" enters the mode; the mode owns its own Confirm/Cancel, so this hides while
         // targeting rather than sitting there offering to start something already started.
+        //
+        // Entering targeting forces marks back on and leaves them on: the operator is aiming at a gap
+        // between recorded trees and has to see those trees. (globalMapLayers also overrides while
+        // targeting, so no frame is ever drawn with the reticle over a raw map.)
         if (!markingMode && selected == null) {
             MarkRemovedButton(
-                onClick = { markingMode = true },
+                onClick = {
+                    marksShown = true
+                    markingMode = true
+                },
                 modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
+
+        // Marks/raw-map toggle: on the right-hand control column, ABOVE "Mark removed" (Recenter goes
+        // below it). That keeps it clear of the header and survey banner at the top, the Scout panel
+        // and info card at the bottom, and the Google logo bottom-left. `offset` rather than padding
+        // so it moves without changing the column's layout: its centre sits 64 dp above the screen
+        // centre, leaving a ~20 dp gap over the Mark removed pill.
+        if (layers.toggleButton) {
+            MarksToggleButton(
+                marksShown = marksShown,
+                onToggle = { marksShown = !marksShown },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .offset(y = (-64).dp)
+                    .padding(12.dp)
             )
         }
 
@@ -721,6 +768,7 @@ private fun MapHeader(
     focusedLabel: String?,
     treeCount: Int,
     classCounts: Map<TreeClass, Int>,
+    showLegend: Boolean,
     onClearFocus: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -740,7 +788,8 @@ private fun MapHeader(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
                     )
-                    ClassLegend(classCounts)
+                    // Off on the raw map: it explains colours that are no longer drawn.
+                    if (showLegend) ClassLegend(classCounts)
                 }
             } else {
                 Text(
